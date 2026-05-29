@@ -243,6 +243,7 @@ export default function Home() {
   const pinchRef = useRef<{ panel: PanelName; distance: number; scale: number } | null>(null);
   const interactionActiveRef = useRef(false);
   const batchOutputTimerRef = useRef<number | null>(null);
+  const batchTipTimerRef = useRef<number | null>(null);
 
   const [panels, setPanels] = useState<Record<PanelName, PanelState>>({
     top: emptyPanel(),
@@ -255,7 +256,8 @@ export default function Home() {
   const [batchActive, setBatchActive] = useState(false);
   const [currentBatchIndex, setCurrentBatchIndex] = useState(0);
   const [selectedBatchIndex, setSelectedBatchIndex] = useState<number | null>(null);
-  const [batchStatus, setBatchStatus] = useState('点一张图片选中，再点另一张交换位置。');
+  const [batchTip, setBatchTip] = useState('点一张图片选中，再点另一张交换位置。');
+  const [batchTipVisible, setBatchTipVisible] = useState(false);
   const [fontIndex, setFontIndex] = useState(0);
   const topText = 'Yes';
   const bottomText = 'But';
@@ -299,6 +301,14 @@ export default function Home() {
     };
   }, [batchActive, batchPosters, fontFamily, fontWeight]);
 
+  useEffect(() => {
+    return () => {
+      if (batchTipTimerRef.current !== null) {
+        window.clearTimeout(batchTipTimerRef.current);
+      }
+    };
+  }, []);
+
   function canvasPoint(event: { clientX: number; clientY: number }) {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
@@ -316,6 +326,19 @@ export default function Home() {
 
   function openUpload(panel: PanelName) {
     (panel === 'top' ? topInputRef : bottomInputRef).current?.click();
+  }
+
+  function showBatchTip(message: string) {
+    if (batchTipTimerRef.current !== null) {
+      window.clearTimeout(batchTipTimerRef.current);
+    }
+
+    setBatchTip(message);
+    setBatchTipVisible(true);
+    batchTipTimerRef.current = window.setTimeout(() => {
+      setBatchTipVisible(false);
+      batchTipTimerRef.current = null;
+    }, 2600);
   }
 
   async function loadFile(panelName: PanelName, file: File | undefined) {
@@ -364,7 +387,7 @@ export default function Home() {
     setBatchActive(false);
     setCurrentBatchIndex(0);
     setSelectedBatchIndex(null);
-    setBatchStatus('点一张图片选中，再点另一张交换位置。');
+    showBatchTip('点一张图片选中，再点另一张交换位置。');
     setMode('batch-group');
   }
 
@@ -376,7 +399,7 @@ export default function Home() {
     const assets = await Promise.all(imageFiles.map((file, index) => loadImageAsset(file, offset + index)));
     setBatchAssets((current) => [...current, ...assets]);
     setSelectedBatchIndex(null);
-    setBatchStatus('已添加图片。点一张图片选中，再点另一张交换位置。');
+    showBatchTip('已添加图片。点一张图片选中，再点另一张交换位置。');
   }
 
   function swapBatchAssets(fromIndex: number, toIndex: number) {
@@ -393,18 +416,18 @@ export default function Home() {
   function handleBatchTileClick(index: number) {
     if (selectedBatchIndex === null) {
       setSelectedBatchIndex(index);
-      setBatchStatus(`已选中第 ${index + 1} 张。现在点目标图片完成交换。`);
+      showBatchTip(`已选中第 ${index + 1} 张。现在点目标图片完成交换。`);
       return;
     }
 
     if (selectedBatchIndex === index) {
       setSelectedBatchIndex(null);
-      setBatchStatus('已取消选择。点一张图片重新开始。');
+      showBatchTip('已取消选择。点一张图片重新开始。');
       return;
     }
 
     swapBatchAssets(selectedBatchIndex, index);
-    setBatchStatus(`已交换第 ${selectedBatchIndex + 1} 张和第 ${index + 1} 张。`);
+    showBatchTip(`已交换第 ${selectedBatchIndex + 1} 张和第 ${index + 1} 张。`);
     setSelectedBatchIndex(null);
   }
 
@@ -609,11 +632,10 @@ export default function Home() {
 
   if (mode === 'batch-group') {
     const groups = Array.from({ length: Math.ceil(batchAssets.length / 2) }, (_, index) => index * 2);
-    const selectedBatchNumber = selectedBatchIndex === null ? null : selectedBatchIndex + 1;
 
     return (
       <main className="min-h-dvh bg-[#202020] px-4 py-[calc(18px+env(safe-area-inset-top))] text-white">
-        <section className="mx-auto flex min-h-[calc(100dvh-36px)] w-full max-w-[430px] flex-col">
+        <section className="relative mx-auto flex min-h-[calc(100dvh-36px)] w-full max-w-[430px] flex-col">
           <header className="mb-3 flex items-center justify-between">
             <button
               type="button"
@@ -636,44 +658,17 @@ export default function Home() {
             </button>
           </header>
 
-          <button
-            type="button"
-            onClick={() => batchAppendInputRef.current?.click()}
-            className="mb-3 h-11 w-full rounded-full bg-white/10 text-[14px] font-black text-white active:scale-[0.99]"
-          >
-            继续添加图片
-          </button>
-
           <div
             role="status"
             aria-live="polite"
-            className={`mb-3 rounded-[14px] border px-3 py-2.5 ${
-              selectedBatchNumber
-                ? 'border-[#e84d35]/70 bg-[#e84d35]/16 text-white'
-                : 'border-white/10 bg-white/[0.06] text-white/78'
+            className={`pointer-events-none absolute left-3 right-3 top-[58px] z-30 rounded-full border border-white/16 bg-[#f1f1f1] px-4 py-2 text-center text-[13px] font-black text-[#202020] shadow-[0_16px_36px_rgba(0,0,0,0.32)] transition duration-200 ${
+              batchTipVisible ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'
             }`}
           >
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-[12px] font-black">
-                {selectedBatchNumber ? `已选中 #${selectedBatchNumber}` : '点选交换'}
-              </span>
-              {selectedBatchNumber ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedBatchIndex(null);
-                    setBatchStatus('已取消选择。点一张图片重新开始。');
-                  }}
-                  className="h-7 rounded-full bg-white/12 px-3 text-[12px] font-black text-white active:scale-[0.98]"
-                >
-                  取消
-                </button>
-              ) : null}
-            </div>
-            <p className="mt-1 text-[13px] font-bold leading-snug text-white/72">{batchStatus}</p>
+            {batchTip}
           </div>
 
-          <div className="flex-1 overflow-y-auto pb-5">
+          <div className="flex-1 overflow-y-auto pb-3">
             <div className="grid gap-2.5">
               {groups.map((startIndex, groupIndex) => (
                 <div key={startIndex} className="grid grid-cols-[42px_1fr_1fr] items-stretch gap-2 rounded-[14px] bg-white/[0.06] p-2">
@@ -731,6 +726,13 @@ export default function Home() {
                   </div>
                 </div>
               ))}
+              <button
+                type="button"
+                onClick={() => batchAppendInputRef.current?.click()}
+                className="grid h-16 place-items-center rounded-[14px] border border-dashed border-white/25 bg-white/[0.03] text-[14px] font-black text-white/55 active:scale-[0.99]"
+              >
+                继续添加图片
+              </button>
             </div>
           </div>
         </section>
