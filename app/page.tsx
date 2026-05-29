@@ -52,10 +52,10 @@ const fontOptions = [
 ];
 
 const colorCardFontOptions = [
-  { label: '打字机', value: 'Courier New, Courier, PingFang SC, Microsoft YaHei, monospace', weight: 700 },
-  { label: '宋体印刷', value: 'Georgia, Times New Roman, Songti SC, SimSun, serif', weight: 700 },
-  { label: '黑体印刷', value: 'Impact, Haettenschweiler, STHeiti, PingFang SC, Arial Black, sans-serif', weight: 900 },
-  { label: '手写体', value: 'Bradley Hand, HanziPen SC, Kaiti SC, Comic Sans MS, Segoe Print, cursive', weight: 700 },
+  { label: '打字机', value: 'Courier New, Courier, Menlo, PingFang SC, Microsoft YaHei, monospace', weight: 700 },
+  { label: '宋体印刷', value: 'Georgia, Times New Roman, Songti SC, Songti TC, STSong, SimSun, serif', weight: 700 },
+  { label: '黑体印刷', value: 'Impact, Haettenschweiler, STHeiti, Heiti SC, PingFang SC, Arial Black, sans-serif', weight: 900 },
+  { label: '手写体', value: 'Bradley Hand, HanziPen SC, Kaiti SC, Kaiti TC, STKaiti, Comic Sans MS, Segoe Print, cursive', weight: 700 },
 ];
 
 function emptyPanel(): PanelState {
@@ -223,8 +223,16 @@ function extractDominantColorFromPixels(pixels: Uint8ClampedArray) {
     const g = pixels[index + 1];
     const b = pixels[index + 2];
     const hsl = rgbToHsl({ r, g, b });
-    const saturationWeight = 0.72 + hsl.s / 180;
-    const edgeWeight = hsl.l < 6 || hsl.l > 96 ? 0.72 : 1;
+
+    if ((hsl.l < 8 || hsl.l > 94) && hsl.s < 18) continue;
+
+    const saturation = hsl.s / 100;
+    const lightness = hsl.l / 100;
+    const neutralPenalty = hsl.s < 14 ? 0.18 : 1;
+    const blackWhitePenalty = hsl.l < 10 || hsl.l > 92 ? 0.25 : 1;
+    const highlightWeight = 0.5 + lightness;
+    const saturationWeight = 0.35 + saturation * 2.2;
+    const pixelScore = saturationWeight * highlightWeight * neutralPenalty * blackWhitePenalty;
     const key = `${r >> 4}-${g >> 4}-${b >> 4}`;
     const bucket = buckets.get(key) ?? { r: 0, g: 0, b: 0, count: 0, score: 0 };
 
@@ -232,14 +240,18 @@ function extractDominantColorFromPixels(pixels: Uint8ClampedArray) {
     bucket.g += g;
     bucket.b += b;
     bucket.count += 1;
-    bucket.score += saturationWeight * edgeWeight;
+    bucket.score += pixelScore;
     buckets.set(key, bucket);
   }
 
   let winner: { r: number; g: number; b: number; count: number; score: number } | null = null;
+  let winnerScore = 0;
   for (const bucket of buckets.values()) {
-    if (!winner || bucket.score > winner.score) {
+    const averageSalience = bucket.score / bucket.count;
+    const candidateScore = Math.sqrt(bucket.count) * averageSalience;
+    if (!winner || candidateScore > winnerScore) {
       winner = bucket;
+      winnerScore = candidateScore;
     }
   }
 
@@ -502,6 +514,7 @@ export default function Home() {
   const interactionActiveRef = useRef(false);
   const batchOutputTimerRef = useRef<number | null>(null);
   const batchTipTimerRef = useRef<number | null>(null);
+  const fontCyclePointerRef = useRef(false);
 
   const [panels, setPanels] = useState<Record<PanelName, PanelState>>({
     top: emptyPanel(),
@@ -971,6 +984,14 @@ export default function Home() {
     downloadCurrentPoster();
   }
 
+  function cycleActiveFont() {
+    if (template === 'color-note') {
+      setColorCardFontIndex((current) => (current + 1) % colorCardFontOptions.length);
+      return;
+    }
+    setFontIndex((current) => (current + 1) % fontOptions.length);
+  }
+
   if (mode === 'batch-group') {
     const batchGroupSize = template === 'color-note' ? 1 : 2;
     const groups = Array.from({ length: Math.ceil(batchAssets.length / batchGroupSize) }, (_, index) => index * batchGroupSize);
@@ -1247,12 +1268,17 @@ export default function Home() {
             <div className="poster-frame flex items-center justify-between">
               <button
                 type="button"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  fontCyclePointerRef.current = true;
+                  cycleActiveFont();
+                  window.setTimeout(() => {
+                    fontCyclePointerRef.current = false;
+                  }, 350);
+                }}
                 onClick={() => {
-                  if (template === 'color-note') {
-                    setColorCardFontIndex((current) => (current + 1) % colorCardFontOptions.length);
-                    return;
-                  }
-                  setFontIndex((current) => (current + 1) % fontOptions.length);
+                  if (fontCyclePointerRef.current) return;
+                  cycleActiveFont();
                 }}
                 aria-label={`切换字体：${activeFontOption.label}`}
                 className="grid h-[50px] w-[50px] place-items-center rounded-full bg-[#e0e0e0] text-[24px] font-black leading-none text-black shadow-[0_14px_30px_rgba(0,0,0,0.24)] active:scale-95"
