@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 :root {
+  --app-bg: #202020;
   --paper: #f6f1e8;
   --paper-deep: #e7dbc8;
   --ink: #241d1a;
@@ -23,12 +24,10 @@ body {
 
 body {
   margin: 0;
-  background:
-    linear-gradient(135deg, rgba(232, 77, 53, 0.08), transparent 34%),
-    linear-gradient(315deg, rgba(80, 107, 63, 0.12), transparent 28%),
-    var(--paper);
+  background: var(--app-bg);
   color: var(--ink);
   font-family: Avenir Next, Gill Sans, Trebuchet MS, sans-serif;
+  overscroll-behavior-y: none;
 }
 
 button,
@@ -46,7 +45,8 @@ canvas {
 }
 
 .poster-frame {
-  width: min(100%, 420px);
+  width: min(calc(100vw - 32px), 430px);
+  margin-inline: auto;
 }
 
 input[type='range'] {
@@ -59,12 +59,10 @@ input[type='range'] {
 
 @media (max-width: 767px) {
   body {
-    background:
-      linear-gradient(180deg, rgba(232, 77, 53, 0.1), transparent 26%),
-      var(--paper);
+    background: var(--app-bg);
   }
 
   .poster-frame {
-    width: min(100%, max(246px, calc((100dvh - 292px) * 0.75)), 390px);
+    width: min(calc(100vw - 32px), 430px);
   }
 }

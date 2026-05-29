@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, DragEvent, PointerEvent, WheelEvent, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, PointerEvent, WheelEvent, useEffect, useRef, useState } from 'react';
 
 type PanelName = 'top' | 'bottom';
 type AppMode = 'single' | 'batch-group';
@@ -28,6 +28,7 @@ type BatchPoster = {
 const outputWidth = 1080;
 const outputHeight = 1440;
 const panelHeight = outputHeight / 2;
+const maxSourceDimension = 2400;
 
 const fontOptions = [
   { label: '重磅无衬线', value: 'Arial Black, Arial, sans-serif', weight: 900 },
@@ -53,16 +54,25 @@ function panelY(panel: PanelName) {
   return panel === 'top' ? 0 : panelHeight;
 }
 
+function imageSize(image: HTMLImageElement) {
+  return {
+    width: image.naturalWidth || image.width,
+    height: image.naturalHeight || image.height,
+  };
+}
+
 function getCoverScale(image: HTMLImageElement) {
-  return Math.max(outputWidth / image.width, panelHeight / image.height);
+  const size = imageSize(image);
+  return Math.max(outputWidth / size.width, panelHeight / size.height);
 }
 
 function getClampedPanel(panel: PanelState): PanelState {
   if (!panel.image) return panel;
 
   const baseScale = getCoverScale(panel.image);
-  const drawWidth = panel.image.width * baseScale * panel.scale;
-  const drawHeight = panel.image.height * baseScale * panel.scale;
+  const size = imageSize(panel.image);
+  const drawWidth = size.width * baseScale * panel.scale;
+  const drawHeight = size.height * baseScale * panel.scale;
   const maxX = Math.max(0, (drawWidth - outputWidth) / 2);
   const maxY = Math.max(0, (drawHeight - panelHeight) / 2);
 
@@ -91,10 +101,11 @@ function drawImagePanel(ctx: CanvasRenderingContext2D, panelName: PanelName, pan
   const image = clamped.image;
   if (!image) return;
 
+  const size = imageSize(image);
   const baseScale = getCoverScale(image);
   const scale = baseScale * clamped.scale;
-  const drawWidth = image.width * scale;
-  const drawHeight = image.height * scale;
+  const drawWidth = size.width * scale;
+  const drawHeight = size.height * scale;
   const x = (outputWidth - drawWidth) / 2 + clamped.offsetX;
   const drawY = y + (panelHeight - drawHeight) / 2 + clamped.offsetY;
 
@@ -153,24 +164,53 @@ function drawPosterToCanvas(
   drawLabel(ctx, 'bottom', 'But', 60, fontFamily, fontWeight);
 }
 
-function loadImageAsset(file: File, index: number): Promise<BatchAsset> {
+function createImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
     const image = new Image();
-    image.onload = () => {
-      resolve({
-        id: `${Date.now()}-${index}-${file.name}`,
-        image,
-        name: file.name,
-        url,
-      });
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error(`Cannot load image: ${file.name}`));
-    };
-    image.src = url;
+    image.decoding = 'async';
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = src;
   });
+}
+
+async function normalizeImageForEditor(image: HTMLImageElement, mimeType: string) {
+  const size = imageSize(image);
+  const longestSide = Math.max(size.width, size.height);
+  const scale = longestSide > maxSourceDimension ? maxSourceDimension / longestSide : 1;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(size.width * scale);
+  canvas.height = Math.round(size.height * scale);
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return image;
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+  const outputType = mimeType === 'image/png' || mimeType === 'image/svg+xml' ? 'image/png' : 'image/jpeg';
+  return createImage(canvas.toDataURL(outputType, 0.9));
+}
+
+async function loadImageFromFile(file: File) {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await createImage(url);
+    return normalizeImageForEditor(image, file.type);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function loadImageAsset(file: File, index: number): Promise<BatchAsset> {
+  const image = await loadImageFromFile(file);
+  return {
+    id: `${Date.now()}-${index}-${file.name}`,
+    image,
+    name: file.name,
+    url: image.src,
+  };
 }
 
 function panelFromImage(image: HTMLImageElement | null): PanelState {
@@ -201,6 +241,17 @@ export default function Home() {
   const tapRef = useRef<{ panel: PanelName; x: number; y: number; moved: boolean } | null>(null);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchRef = useRef<{ panel: PanelName; distance: number; scale: number } | null>(null);
+  const interactionActiveRef = useRef(false);
+  const batchOutputTimerRef = useRef<number | null>(null);
+  const batchDragRef = useRef<{
+    index: number;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    active: boolean;
+    timer: number | null;
+  } | null>(null);
+  const suppressBatchClickRef = useRef(false);
 
   const [panels, setPanels] = useState<Record<PanelName, PanelState>>({
     top: emptyPanel(),
@@ -237,7 +288,24 @@ export default function Home() {
   useEffect(() => {
     if (!batchActive) return;
 
-    setBatchOutputs(renderBatchOutputs(batchPosters, fontFamily, fontWeight));
+    if (batchOutputTimerRef.current !== null) {
+      window.clearTimeout(batchOutputTimerRef.current);
+    }
+
+    batchOutputTimerRef.current = window.setTimeout(
+      () => {
+        setBatchOutputs(renderBatchOutputs(batchPosters, fontFamily, fontWeight));
+        batchOutputTimerRef.current = null;
+      },
+      interactionActiveRef.current ? 220 : 40,
+    );
+
+    return () => {
+      if (batchOutputTimerRef.current !== null) {
+        window.clearTimeout(batchOutputTimerRef.current);
+        batchOutputTimerRef.current = null;
+      }
+    };
   }, [batchActive, batchPosters, fontFamily, fontWeight]);
 
   function canvasPoint(event: { clientX: number; clientY: number }) {
@@ -259,50 +327,39 @@ export default function Home() {
     (panel === 'top' ? topInputRef : bottomInputRef).current?.click();
   }
 
-  function loadFile(panelName: PanelName, file: File | undefined) {
+  async function loadFile(panelName: PanelName, file: File | undefined) {
     if (!file || !file.type.startsWith('image/')) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const image = new Image();
-      image.onload = () => {
-        if (batchActive) {
-          setBatchPosters((current) =>
-            current.map((poster, index) =>
-              index === currentBatchIndex
-                ? {
-                    ...poster,
-                    panels: {
-                      ...poster.panels,
-                      [panelName]: {
-                        image,
-                        fileName: file.name,
-                        scale: 1,
-                        offsetX: 0,
-                        offsetY: 0,
-                      },
-                    },
-                  }
-                : poster,
-            ),
-          );
-          return;
-        }
-
-        setPanels((current) => ({
-          ...current,
-          [panelName]: {
-            image,
-            fileName: file.name,
-            scale: 1,
-            offsetX: 0,
-            offsetY: 0,
-          },
-        }));
-      };
-      image.src = String(reader.result);
+    const image = await loadImageFromFile(file);
+    const nextPanel = {
+      image,
+      fileName: file.name,
+      scale: 1,
+      offsetX: 0,
+      offsetY: 0,
     };
-    reader.readAsDataURL(file);
+
+    if (batchActive) {
+      setBatchPosters((current) =>
+        current.map((poster, index) =>
+          index === currentBatchIndex
+            ? {
+                ...poster,
+                panels: {
+                  ...poster.panels,
+                  [panelName]: nextPanel,
+                },
+              }
+            : poster,
+        ),
+      );
+      return;
+    }
+
+    setPanels((current) => ({
+      ...current,
+      [panelName]: nextPanel,
+    }));
   }
 
   async function loadBatchFiles(files: FileList | null) {
@@ -343,6 +400,11 @@ export default function Home() {
   }
 
   function handleBatchTileClick(index: number) {
+    if (suppressBatchClickRef.current) {
+      suppressBatchClickRef.current = false;
+      return;
+    }
+
     if (selectedBatchIndex === null) {
       setSelectedBatchIndex(index);
       return;
@@ -352,12 +414,94 @@ export default function Home() {
     setSelectedBatchIndex(null);
   }
 
-  function handleBatchDrop(event: DragEvent<HTMLButtonElement>, index: number) {
+  function clearBatchDragTimer() {
+    const drag = batchDragRef.current;
+    if (!drag || drag.timer === null) return;
+
+    window.clearTimeout(drag.timer);
+    drag.timer = null;
+  }
+
+  function batchIndexFromPoint(clientX: number, clientY: number) {
+    const element = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('[data-batch-index]');
+    const value = element?.dataset.batchIndex;
+    return value ? Number(value) : null;
+  }
+
+  function activateBatchPointerDrag(pointerId: number, target: HTMLButtonElement) {
+    const drag = batchDragRef.current;
+    if (!drag || drag.pointerId !== pointerId || drag.active) return;
+
+    drag.active = true;
+    setDraggedBatchIndex(null);
+    window.requestAnimationFrame(() => setDraggedBatchIndex(drag.index));
+    target.setPointerCapture(pointerId);
+  }
+
+  function handleBatchPointerDown(event: PointerEvent<HTMLButtonElement>, index: number) {
+    batchDragRef.current = {
+      index,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+      timer: null,
+    };
+
+    const target = event.currentTarget;
+    if (event.pointerType === 'touch' || event.pointerType === 'pen') {
+      batchDragRef.current.timer = window.setTimeout(() => {
+        activateBatchPointerDrag(event.pointerId, target);
+      }, 220);
+      return;
+    }
+
+    target.setPointerCapture(event.pointerId);
+  }
+
+  function handleBatchPointerMove(event: PointerEvent<HTMLButtonElement>) {
+    const drag = batchDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+    if (!drag.active) {
+      if ((event.pointerType === 'touch' || event.pointerType === 'pen') && distance > 10) {
+        clearBatchDragTimer();
+        return;
+      }
+
+      if (event.pointerType === 'mouse' && distance > 6) {
+        activateBatchPointerDrag(event.pointerId, event.currentTarget);
+      }
+      return;
+    }
+
     event.preventDefault();
-    if (draggedBatchIndex !== null) {
-      swapBatchAssets(draggedBatchIndex, index);
+    const hoveredIndex = batchIndexFromPoint(event.clientX, event.clientY);
+    setSelectedBatchIndex(hoveredIndex);
+  }
+
+  function finishBatchPointerDrag(event: PointerEvent<HTMLButtonElement>) {
+    const drag = batchDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    clearBatchDragTimer();
+
+    if (drag.active) {
+      event.preventDefault();
+      const dropIndex = batchIndexFromPoint(event.clientX, event.clientY);
+      if (dropIndex !== null) {
+        swapBatchAssets(drag.index, dropIndex);
+      }
+      suppressBatchClickRef.current = true;
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
     }
     setDraggedBatchIndex(null);
+    setSelectedBatchIndex(null);
+    batchDragRef.current = null;
   }
 
   function completeBatch() {
@@ -456,6 +600,7 @@ export default function Home() {
       return;
     }
 
+    interactionActiveRef.current = true;
     pointersRef.current.set(event.pointerId, point);
     tapRef.current = { panel, x: point.x, y: point.y, moved: false };
     if (pointersRef.current.size === 2) {
@@ -515,7 +660,12 @@ export default function Home() {
     if (pointersRef.current.size < 2) {
       pinchRef.current = null;
     }
-    event.currentTarget.releasePointerCapture(event.pointerId);
+    if (pointersRef.current.size === 0) {
+      interactionActiveRef.current = false;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
 
     if (tap && !tap.moved && pointersRef.current.size === 0) {
       openUpload(tap.panel);
@@ -614,14 +764,16 @@ export default function Home() {
                         <button
                           key={asset.id}
                           type="button"
-                          draggable
+                          data-batch-index={assetIndex}
                           onClick={() => handleBatchTileClick(assetIndex)}
-                          onDragStart={() => setDraggedBatchIndex(assetIndex)}
-                          onDragOver={(event) => event.preventDefault()}
-                          onDrop={(event) => handleBatchDrop(event, assetIndex)}
-                          onDragEnd={() => setDraggedBatchIndex(null)}
-                          className={`relative aspect-[4/3] overflow-hidden bg-white/10 text-left active:scale-[0.98] ${
+                          onPointerDown={(event) => handleBatchPointerDown(event, assetIndex)}
+                          onPointerMove={handleBatchPointerMove}
+                          onPointerUp={finishBatchPointerDrag}
+                          onPointerCancel={finishBatchPointerDrag}
+                          className={`relative aspect-[4/3] touch-pan-y overflow-hidden bg-white/10 text-left transition active:scale-[0.98] ${
                             selectedBatchIndex === assetIndex ? 'ring-2 ring-white' : ''
+                          } ${
+                            draggedBatchIndex === assetIndex ? 'scale-[0.98] opacity-60 ring-2 ring-[#e84d35]' : ''
                           }`}
                         >
                           <img src={asset.url} alt="" className="h-full w-full object-cover" draggable={false} />
@@ -686,10 +838,20 @@ export default function Home() {
                 }}
               />
               {!visiblePanels?.top.image ? (
-                <div className="pointer-events-none absolute inset-x-2 top-2 h-[calc(50%-8px)] border border-dashed border-[#c4c4c4] border-b-0" />
+                <button
+                  type="button"
+                  aria-label="上传上半部分图片"
+                  onClick={() => openUpload('top')}
+                  className="absolute inset-x-2 top-2 z-10 h-[calc(50%-8px)] border border-dashed border-[#c4c4c4] border-b-0 bg-transparent"
+                />
               ) : null}
               {!visiblePanels?.bottom.image ? (
-                <div className="pointer-events-none absolute inset-x-2 bottom-2 h-[calc(50%-8px)] border border-dashed border-[#c4c4c4] border-t-0" />
+                <button
+                  type="button"
+                  aria-label="上传下半部分图片"
+                  onClick={() => openUpload('bottom')}
+                  className="absolute inset-x-2 bottom-2 z-10 h-[calc(50%-8px)] border border-dashed border-[#c4c4c4] border-t-0 bg-transparent"
+                />
               ) : null}
               {!visiblePanels?.top.image && !visiblePanels?.bottom.image ? (
                 <div className="pointer-events-none absolute left-2 right-2 top-1/2 border-t border-dashed border-[#c4c4c4]" />
