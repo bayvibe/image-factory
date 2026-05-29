@@ -36,7 +36,7 @@ const outputWidth = 1080;
 const outputHeight = 1440;
 const panelHeight = outputHeight / 2;
 const maxSourceDimension = 2400;
-const labelFontSize = 68;
+const labelFontSize = 74;
 const colorNoteFontSize = 56;
 const defaultColorNoteText = '这一刻有自己的颜色';
 const defaultColorNoteColor: RgbColor = { r: 226, g: 176, b: 82 };
@@ -500,6 +500,42 @@ function renderBatchOutputs(
   return outputs;
 }
 
+function isTouchMobileBrowser() {
+  return window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 1;
+}
+
+async function dataUrlToPngFile(dataUrl: string, filename: string) {
+  const response = await fetch(dataUrl);
+  const blob = await response.blob();
+  return new File([blob], filename, { type: 'image/png' });
+}
+
+async function shareImageOnMobile(dataUrl: string, filename: string) {
+  if (!isTouchMobileBrowser() || !navigator.share) return false;
+
+  try {
+    const file = await dataUrlToPngFile(dataUrl, filename);
+    if (navigator.canShare && !navigator.canShare({ files: [file] })) return false;
+    await navigator.share({
+      files: [file],
+      title: '图片工厂',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function savePosterImage(dataUrl: string, filename: string) {
+  const shared = await shareImageOnMobile(dataUrl, filename);
+  if (shared) return;
+
+  const link = document.createElement('a');
+  link.download = filename;
+  link.href = dataUrl;
+  link.click();
+}
+
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const topInputRef = useRef<HTMLInputElement | null>(null);
@@ -818,10 +854,7 @@ export default function Home() {
   }
 
   function downloadBatchPoster(url: string, index: number) {
-    const link = document.createElement('a');
-    link.download = `image-factory-batch-${String(index + 1).padStart(2, '0')}.png`;
-    link.href = url;
-    link.click();
+    savePosterImage(url, `image-factory-batch-${String(index + 1).padStart(2, '0')}.png`);
   }
 
   function downloadAllBatchPosters() {
@@ -836,10 +869,7 @@ export default function Home() {
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
-    const link = document.createElement('a');
-    link.download = `image-factory-${new Date().toISOString().slice(0, 10)}.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
+    savePosterImage(canvas.toDataURL('image/png'), `image-factory-${new Date().toISOString().slice(0, 10)}.png`);
   }
 
   function updatePanel(panelName: PanelName, updater: (panel: PanelState) => PanelState) {
