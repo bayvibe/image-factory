@@ -510,14 +510,14 @@ async function dataUrlToPngFile(dataUrl: string, filename: string) {
   return new File([blob], filename, { type: 'image/png' });
 }
 
-async function shareImageOnMobile(dataUrl: string, filename: string) {
+async function shareImagesOnMobile(images: Array<{ dataUrl: string; filename: string }>) {
   if (!isTouchMobileBrowser() || !navigator.share) return false;
 
   try {
-    const file = await dataUrlToPngFile(dataUrl, filename);
-    if (navigator.canShare && !navigator.canShare({ files: [file] })) return false;
+    const files = await Promise.all(images.map((image) => dataUrlToPngFile(image.dataUrl, image.filename)));
+    if (navigator.canShare && !navigator.canShare({ files })) return false;
     await navigator.share({
-      files: [file],
+      files,
       title: '图片工厂',
     });
     return true;
@@ -527,13 +527,25 @@ async function shareImageOnMobile(dataUrl: string, filename: string) {
 }
 
 async function savePosterImage(dataUrl: string, filename: string) {
-  const shared = await shareImageOnMobile(dataUrl, filename);
+  const shared = await shareImagesOnMobile([{ dataUrl, filename }]);
   if (shared) return;
 
   const link = document.createElement('a');
   link.download = filename;
   link.href = dataUrl;
   link.click();
+}
+
+async function savePosterImages(images: Array<{ dataUrl: string; filename: string }>) {
+  const shared = await shareImagesOnMobile(images);
+  if (shared) return;
+
+  images.forEach((image) => {
+    const link = document.createElement('a');
+    link.download = image.filename;
+    link.href = image.dataUrl;
+    link.click();
+  });
 }
 
 export default function Home() {
@@ -853,15 +865,14 @@ export default function Home() {
     });
   }
 
-  function downloadBatchPoster(url: string, index: number) {
-    savePosterImage(url, `image-factory-batch-${String(index + 1).padStart(2, '0')}.png`);
-  }
-
   function downloadAllBatchPosters() {
     const outputs = renderBatchOutputs(batchPosters, fontFamily, fontWeight, template, colorNoteText);
-    outputs.forEach((url, index) => {
-      window.setTimeout(() => downloadBatchPoster(url, index), index * 120);
-    });
+    savePosterImages(
+      outputs.map((dataUrl, index) => ({
+        dataUrl,
+        filename: `image-factory-batch-${String(index + 1).padStart(2, '0')}.png`,
+      })),
+    );
   }
 
   function downloadCurrentPoster() {
