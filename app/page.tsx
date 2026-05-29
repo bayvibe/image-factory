@@ -243,15 +243,6 @@ export default function Home() {
   const pinchRef = useRef<{ panel: PanelName; distance: number; scale: number } | null>(null);
   const interactionActiveRef = useRef(false);
   const batchOutputTimerRef = useRef<number | null>(null);
-  const batchDragRef = useRef<{
-    index: number;
-    pointerId: number;
-    startX: number;
-    startY: number;
-    active: boolean;
-    timer: number | null;
-  } | null>(null);
-  const suppressBatchClickRef = useRef(false);
 
   const [panels, setPanels] = useState<Record<PanelName, PanelState>>({
     top: emptyPanel(),
@@ -263,8 +254,8 @@ export default function Home() {
   const [batchOutputs, setBatchOutputs] = useState<string[]>([]);
   const [batchActive, setBatchActive] = useState(false);
   const [currentBatchIndex, setCurrentBatchIndex] = useState(0);
-  const [draggedBatchIndex, setDraggedBatchIndex] = useState<number | null>(null);
   const [selectedBatchIndex, setSelectedBatchIndex] = useState<number | null>(null);
+  const [batchStatus, setBatchStatus] = useState('点一张图片选中，再点另一张交换位置。');
   const [fontIndex, setFontIndex] = useState(0);
   const topText = 'Yes';
   const bottomText = 'But';
@@ -373,7 +364,7 @@ export default function Home() {
     setBatchActive(false);
     setCurrentBatchIndex(0);
     setSelectedBatchIndex(null);
-    setDraggedBatchIndex(null);
+    setBatchStatus('点一张图片选中，再点另一张交换位置。');
     setMode('batch-group');
   }
 
@@ -385,7 +376,7 @@ export default function Home() {
     const assets = await Promise.all(imageFiles.map((file, index) => loadImageAsset(file, offset + index)));
     setBatchAssets((current) => [...current, ...assets]);
     setSelectedBatchIndex(null);
-    setDraggedBatchIndex(null);
+    setBatchStatus('已添加图片。点一张图片选中，再点另一张交换位置。');
   }
 
   function swapBatchAssets(fromIndex: number, toIndex: number) {
@@ -400,108 +391,21 @@ export default function Home() {
   }
 
   function handleBatchTileClick(index: number) {
-    if (suppressBatchClickRef.current) {
-      suppressBatchClickRef.current = false;
+    if (selectedBatchIndex === null) {
+      setSelectedBatchIndex(index);
+      setBatchStatus(`已选中第 ${index + 1} 张。现在点目标图片完成交换。`);
       return;
     }
 
-    if (selectedBatchIndex === null) {
-      setSelectedBatchIndex(index);
+    if (selectedBatchIndex === index) {
+      setSelectedBatchIndex(null);
+      setBatchStatus('已取消选择。点一张图片重新开始。');
       return;
     }
 
     swapBatchAssets(selectedBatchIndex, index);
+    setBatchStatus(`已交换第 ${selectedBatchIndex + 1} 张和第 ${index + 1} 张。`);
     setSelectedBatchIndex(null);
-  }
-
-  function clearBatchDragTimer() {
-    const drag = batchDragRef.current;
-    if (!drag || drag.timer === null) return;
-
-    window.clearTimeout(drag.timer);
-    drag.timer = null;
-  }
-
-  function batchIndexFromPoint(clientX: number, clientY: number) {
-    const element = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('[data-batch-index]');
-    const value = element?.dataset.batchIndex;
-    return value ? Number(value) : null;
-  }
-
-  function activateBatchPointerDrag(pointerId: number, target: HTMLButtonElement) {
-    const drag = batchDragRef.current;
-    if (!drag || drag.pointerId !== pointerId || drag.active) return;
-
-    drag.active = true;
-    setDraggedBatchIndex(null);
-    window.requestAnimationFrame(() => setDraggedBatchIndex(drag.index));
-    target.setPointerCapture(pointerId);
-  }
-
-  function handleBatchPointerDown(event: PointerEvent<HTMLButtonElement>, index: number) {
-    batchDragRef.current = {
-      index,
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      active: false,
-      timer: null,
-    };
-
-    const target = event.currentTarget;
-    if (event.pointerType === 'touch' || event.pointerType === 'pen') {
-      batchDragRef.current.timer = window.setTimeout(() => {
-        activateBatchPointerDrag(event.pointerId, target);
-      }, 220);
-      return;
-    }
-
-    target.setPointerCapture(event.pointerId);
-  }
-
-  function handleBatchPointerMove(event: PointerEvent<HTMLButtonElement>) {
-    const drag = batchDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
-    if (!drag.active) {
-      if ((event.pointerType === 'touch' || event.pointerType === 'pen') && distance > 10) {
-        clearBatchDragTimer();
-        return;
-      }
-
-      if (event.pointerType === 'mouse' && distance > 6) {
-        activateBatchPointerDrag(event.pointerId, event.currentTarget);
-      }
-      return;
-    }
-
-    event.preventDefault();
-    const hoveredIndex = batchIndexFromPoint(event.clientX, event.clientY);
-    setSelectedBatchIndex(hoveredIndex);
-  }
-
-  function finishBatchPointerDrag(event: PointerEvent<HTMLButtonElement>) {
-    const drag = batchDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    clearBatchDragTimer();
-
-    if (drag.active) {
-      event.preventDefault();
-      const dropIndex = batchIndexFromPoint(event.clientX, event.clientY);
-      if (dropIndex !== null) {
-        swapBatchAssets(drag.index, dropIndex);
-      }
-      suppressBatchClickRef.current = true;
-    }
-
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    setDraggedBatchIndex(null);
-    setSelectedBatchIndex(null);
-    batchDragRef.current = null;
   }
 
   function completeBatch() {
@@ -705,6 +609,7 @@ export default function Home() {
 
   if (mode === 'batch-group') {
     const groups = Array.from({ length: Math.ceil(batchAssets.length / 2) }, (_, index) => index * 2);
+    const selectedBatchNumber = selectedBatchIndex === null ? null : selectedBatchIndex + 1;
 
     return (
       <main className="min-h-dvh bg-[#202020] px-4 py-[calc(18px+env(safe-area-inset-top))] text-white">
@@ -739,6 +644,35 @@ export default function Home() {
             继续添加图片
           </button>
 
+          <div
+            role="status"
+            aria-live="polite"
+            className={`mb-3 rounded-[14px] border px-3 py-2.5 ${
+              selectedBatchNumber
+                ? 'border-[#e84d35]/70 bg-[#e84d35]/16 text-white'
+                : 'border-white/10 bg-white/[0.06] text-white/78'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[12px] font-black">
+                {selectedBatchNumber ? `已选中 #${selectedBatchNumber}` : '点选交换'}
+              </span>
+              {selectedBatchNumber ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedBatchIndex(null);
+                    setBatchStatus('已取消选择。点一张图片重新开始。');
+                  }}
+                  className="h-7 rounded-full bg-white/12 px-3 text-[12px] font-black text-white active:scale-[0.98]"
+                >
+                  取消
+                </button>
+              ) : null}
+            </div>
+            <p className="mt-1 text-[13px] font-bold leading-snug text-white/72">{batchStatus}</p>
+          </div>
+
           <div className="flex-1 overflow-y-auto pb-5">
             <div className="grid gap-2.5">
               {groups.map((startIndex, groupIndex) => (
@@ -765,21 +699,32 @@ export default function Home() {
                           key={asset.id}
                           type="button"
                           data-batch-index={assetIndex}
+                          aria-pressed={selectedBatchIndex === assetIndex}
+                          aria-label={
+                            selectedBatchIndex === assetIndex
+                              ? `第 ${assetIndex + 1} 张，已选中。再次点击取消选择`
+                              : selectedBatchIndex === null
+                                ? `选择第 ${assetIndex + 1} 张`
+                                : `交换到第 ${assetIndex + 1} 张`
+                          }
                           onClick={() => handleBatchTileClick(assetIndex)}
-                          onPointerDown={(event) => handleBatchPointerDown(event, assetIndex)}
-                          onPointerMove={handleBatchPointerMove}
-                          onPointerUp={finishBatchPointerDrag}
-                          onPointerCancel={finishBatchPointerDrag}
-                          className={`relative aspect-[4/3] touch-pan-y overflow-hidden bg-white/10 text-left transition active:scale-[0.98] ${
-                            selectedBatchIndex === assetIndex ? 'ring-2 ring-white' : ''
-                          } ${
-                            draggedBatchIndex === assetIndex ? 'scale-[0.98] opacity-60 ring-2 ring-[#e84d35]' : ''
+                          className={`relative aspect-[4/3] touch-manipulation select-none overflow-hidden bg-white/10 text-left transition active:scale-[0.98] ${
+                            selectedBatchIndex === assetIndex
+                              ? 'scale-[0.98] ring-2 ring-[#e84d35]'
+                              : selectedBatchIndex !== null
+                                ? 'ring-1 ring-white/12'
+                                : ''
                           }`}
                         >
                           <img src={asset.url} alt="" className="h-full w-full object-cover" draggable={false} />
                           <span className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-1 text-[11px] font-black text-white">
                             {assetIndex + 1}
                           </span>
+                          {selectedBatchIndex === assetIndex ? (
+                            <span className="absolute bottom-2 left-2 rounded-full bg-[#e84d35] px-2.5 py-1 text-[11px] font-black text-white">
+                              已选中
+                            </span>
+                          ) : null}
                         </button>
                       );
                     })}
@@ -816,15 +761,15 @@ export default function Home() {
         >
           批量
         </button>
-        <div className="flex flex-1 flex-col items-center justify-center gap-10 pb-[calc(34px+env(safe-area-inset-bottom))] pt-[calc(34px+env(safe-area-inset-top))]">
+        <div className="flex flex-1 flex-col items-center justify-start gap-8 pb-[calc(28px+env(safe-area-inset-bottom))] pt-[calc(82px+env(safe-area-inset-top))]">
           <div className="w-full">
-            <div className="poster-frame relative aspect-[3/4] overflow-hidden bg-[#f1f1f1] shadow-[0_18px_48px_rgba(0,0,0,0.28)]">
+            <div className="poster-frame relative aspect-[3/4] overflow-hidden bg-[#202020] shadow-[0_18px_48px_rgba(0,0,0,0.28)]">
               <canvas
                 ref={canvasRef}
                 width={outputWidth}
                 height={outputHeight}
                 aria-label="拼图预览"
-                className="block h-full w-full"
+                className="absolute inset-0 block h-full w-full"
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={endDrag}
@@ -858,7 +803,7 @@ export default function Home() {
               ) : null}
             </div>
             {batchActive && batchOutputs.length ? (
-              <div className="-mx-1 mt-4 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="-mx-1 mt-3 flex gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {batchOutputs.map((url, index) => (
                   <button
                     key={`${url}-${index}`}
@@ -866,7 +811,7 @@ export default function Home() {
                     aria-label={`查看第 ${index + 1} 张`}
                     onClick={() => setCurrentBatchIndex(index)}
                     className={`h-[54px] w-[41px] shrink-0 overflow-hidden bg-[#f1f1f1] transition ${
-                      currentBatchIndex === index ? 'ring-2 ring-white' : 'opacity-55'
+                      currentBatchIndex === index ? 'ring-2 ring-inset ring-white' : 'opacity-55'
                     }`}
                   >
                     <img src={url} alt="" className="h-full w-full object-cover" />
