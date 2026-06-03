@@ -227,12 +227,10 @@ function extractDominantColorFromPixels(pixels: Uint8ClampedArray) {
     if ((hsl.l < 8 || hsl.l > 94) && hsl.s < 18) continue;
 
     const saturation = hsl.s / 100;
-    const lightness = hsl.l / 100;
     const neutralPenalty = hsl.s < 14 ? 0.18 : 1;
     const blackWhitePenalty = hsl.l < 10 || hsl.l > 92 ? 0.25 : 1;
-    const highlightWeight = 0.5 + lightness;
-    const saturationWeight = 0.35 + saturation * 2.2;
-    const pixelScore = saturationWeight * highlightWeight * neutralPenalty * blackWhitePenalty;
+    const saturationWeight = 0.9 + saturation * 0.2;
+    const pixelScore = saturationWeight * neutralPenalty * blackWhitePenalty;
     const key = `${r >> 4}-${g >> 4}-${b >> 4}`;
     const bucket = buckets.get(key) ?? { r: 0, g: 0, b: 0, count: 0, score: 0 };
 
@@ -364,6 +362,26 @@ function drawLabel(
   ctx.restore();
 }
 
+function getColorNoteFontSize(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  fontFamily: string,
+  fontWeight: number,
+) {
+  const text = label.trim();
+  if (!text) return colorNoteFontSize;
+
+  let fontSize = colorNoteFontSize;
+  const maxWidth = outputWidth - 140;
+  while (fontSize > 42) {
+    ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+    if (ctx.measureText(text).width <= maxWidth) break;
+    fontSize -= 2;
+  }
+
+  return fontSize;
+}
+
 function drawColorNoteLabel(
   ctx: CanvasRenderingContext2D,
   panelName: PanelName,
@@ -385,13 +403,9 @@ function drawColorNoteLabel(
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
-  let fontSize = colorNoteFontSize;
+  const fontSize = getColorNoteFontSize(ctx, text, fontFamily, fontWeight);
   const maxWidth = outputWidth - 140;
-  while (fontSize > 42) {
-    ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
-    if (ctx.measureText(text).width <= maxWidth) break;
-    fontSize -= 2;
-  }
+  ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
   ctx.shadowColor = contrastIsDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(0, 0, 0, 0.18)';
   ctx.shadowBlur = 5;
   ctx.shadowOffsetY = 2;
@@ -562,7 +576,6 @@ export default function Home() {
   const interactionActiveRef = useRef(false);
   const batchOutputTimerRef = useRef<number | null>(null);
   const batchTipTimerRef = useRef<number | null>(null);
-  const fontCyclePointerRef = useRef(false);
 
   const [panels, setPanels] = useState<Record<PanelName, PanelState>>({
     top: emptyPanel(),
@@ -586,6 +599,7 @@ export default function Home() {
   const [colorNoteText, setColorNoteText] = useState(defaultColorNoteText);
   const [colorNoteEditing, setColorNoteEditing] = useState(false);
   const [colorNoteBaseColor, setColorNoteBaseColor] = useState<RgbColor>(defaultColorNoteColor);
+  const [colorNoteInputFontSize, setColorNoteInputFontSize] = useState(colorNoteFontSize * (430 / outputWidth));
   const topText = 'Yes';
   const bottomText = 'But';
   const activeFontOption = template === 'color-note' ? colorCardFontOptions[colorCardFontIndex] : fontOptions[fontIndex];
@@ -625,10 +639,31 @@ export default function Home() {
   }, [editablePanels?.bottom, template]);
 
   useEffect(() => {
+    if (template !== 'color-note') return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+
+    const updateInputFontSize = () => {
+      const canvasFontSize = getColorNoteFontSize(ctx, colorNoteText, fontFamily, fontWeight);
+      setColorNoteInputFontSize(canvasFontSize * (canvas.getBoundingClientRect().width / outputWidth));
+    };
+
+    updateInputFontSize();
+    const observer = new ResizeObserver(updateInputFontSize);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [colorNoteText, fontFamily, fontWeight, template]);
+
+  useEffect(() => {
     if (!colorNoteEditing) return;
     window.requestAnimationFrame(() => {
-      colorNoteInputRef.current?.focus();
-      colorNoteInputRef.current?.select();
+      const input = colorNoteInputRef.current;
+      if (!input) return;
+
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
     });
   }, [colorNoteEditing]);
 
@@ -1253,11 +1288,14 @@ export default function Home() {
                           event.currentTarget.blur();
                         }
                       }}
-                      className="absolute left-8 right-8 top-[25%] z-30 -translate-y-1/2 bg-transparent text-center text-[22px] font-bold leading-none outline-none"
+                      className="absolute left-8 right-8 top-[25%] z-30 -translate-y-1/2 bg-transparent text-center font-bold leading-none outline-none"
                       style={{
                         color: colorToCss(colorNoteTextColor),
                         fontFamily,
+                        fontSize: `${colorNoteInputFontSize}px`,
                         fontWeight,
+                        lineHeight: `${colorNoteInputFontSize}px`,
+                        padding: 0,
                         textShadow:
                           relativeLuminance(colorNoteTextColor) < relativeLuminance(colorNoteBaseColor)
                             ? '0 2px 5px rgba(255,255,255,0.16)'
@@ -1269,10 +1307,7 @@ export default function Home() {
               ) : null}
               {cropGuideVisible && hasEditableImage ? (
                 <div className="absolute inset-x-3 bottom-3 z-30 rounded-[14px] border border-white/18 bg-[#202020]/88 p-3 text-white shadow-[0_16px_36px_rgba(0,0,0,0.32)] backdrop-blur">
-                  <div className="text-[13px] font-black">可以直接调整裁切</div>
-                  <p className="mt-1 text-[12px] font-bold leading-snug text-white/70">
-                    拖动图片改变位置，双指捏合缩放。桌面端也可以滚轮缩放。
-                  </p>
+                  <p className="text-[12px] font-bold leading-snug text-white/70">拖动图片改变位置，双指捏合缩放。</p>
                   <button
                     type="button"
                     onClick={dismissCropGuide}
@@ -1309,18 +1344,7 @@ export default function Home() {
             <div className="poster-frame flex items-center justify-between">
               <button
                 type="button"
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  fontCyclePointerRef.current = true;
-                  cycleActiveFont();
-                  window.setTimeout(() => {
-                    fontCyclePointerRef.current = false;
-                  }, 350);
-                }}
-                onClick={() => {
-                  if (fontCyclePointerRef.current) return;
-                  cycleActiveFont();
-                }}
+                onClick={cycleActiveFont}
                 aria-label={`切换字体：${activeFontOption.label}`}
                 className="grid h-[50px] w-[50px] place-items-center rounded-full bg-[#e0e0e0] text-[24px] font-black leading-none text-black shadow-[0_14px_30px_rgba(0,0,0,0.24)] active:scale-95"
               >
