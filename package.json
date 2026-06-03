@@ -9,6 +9,10 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@fontsource-variable/noto-sans-sc": "^5.2.10",
+    "@fontsource-variable/noto-serif-sc": "^5.2.10",
+    "@fontsource/ma-shan-zheng": "^5.2.9",
+    "@fontsource/zcool-qingke-huangyou": "^5.2.8",
     "@tailwindcss/postcss": "^4.3.0",
     "next": "^16.2.6",
     "react": "^19.2.6",

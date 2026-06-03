@@ -52,10 +52,10 @@ const fontOptions = [
 ];
 
 const colorCardFontOptions = [
-  { label: '打字机', value: 'Courier New, Courier, Menlo, PingFang SC, Microsoft YaHei, monospace', weight: 700 },
-  { label: '宋体印刷', value: 'Georgia, Times New Roman, Songti SC, Songti TC, STSong, SimSun, serif', weight: 700 },
-  { label: '黑体印刷', value: 'Impact, Haettenschweiler, STHeiti, Heiti SC, PingFang SC, Arial Black, sans-serif', weight: 900 },
-  { label: '手写体', value: 'Bradley Hand, HanziPen SC, Kaiti SC, Kaiti TC, STKaiti, Comic Sans MS, Segoe Print, cursive', weight: 700 },
+  { label: '打字机', value: "'ZCOOL QingKe HuangYou', monospace", weight: 400 },
+  { label: '宋体印刷', value: "'Noto Serif SC Variable', serif", weight: 700 },
+  { label: '黑体印刷', value: "'Noto Sans SC Variable', sans-serif", weight: 900 },
+  { label: '手写体', value: "'Ma Shan Zheng', cursive", weight: 400 },
 ];
 
 function emptyPanel(): PanelState {
@@ -600,6 +600,7 @@ export default function Home() {
   const [colorNoteEditing, setColorNoteEditing] = useState(false);
   const [colorNoteBaseColor, setColorNoteBaseColor] = useState<RgbColor>(defaultColorNoteColor);
   const [colorNoteInputFontSize, setColorNoteInputFontSize] = useState(colorNoteFontSize * (430 / outputWidth));
+  const [fontLoadVersion, setFontLoadVersion] = useState(0);
   const topText = 'Yes';
   const bottomText = 'But';
   const activeFontOption = template === 'color-note' ? colorCardFontOptions[colorCardFontIndex] : fontOptions[fontIndex];
@@ -631,12 +632,27 @@ export default function Home() {
     drawImagePanel(ctx, 'bottom', activePanels?.bottom ?? emptyPanel());
     drawLabel(ctx, 'top', topText, fontSize, fontFamily, fontWeight);
     drawLabel(ctx, 'bottom', bottomText, fontSize, fontFamily, fontWeight);
-  }, [batchActive, batchPosters, colorNoteBaseColor, colorNoteEditing, colorNoteText, currentBatchIndex, panels, fontFamily, fontWeight, template]);
+  }, [batchActive, batchPosters, colorNoteBaseColor, colorNoteEditing, colorNoteText, currentBatchIndex, panels, fontFamily, fontLoadVersion, fontWeight, template]);
 
   useEffect(() => {
     if (template !== 'color-note') return;
     setColorNoteBaseColor(extractDominantColorFromPanel(editablePanels?.bottom));
   }, [editablePanels?.bottom, template]);
+
+  useEffect(() => {
+    if (template !== 'color-note' || !document.fonts) return;
+
+    let cancelled = false;
+    document.fonts.load(`${fontWeight} ${colorNoteFontSize}px ${fontFamily}`, colorNoteText).then(() => {
+      if (!cancelled) {
+        setFontLoadVersion((current) => current + 1);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [colorNoteText, fontFamily, fontWeight, template]);
 
   useEffect(() => {
     if (template !== 'color-note') return;
@@ -654,7 +670,7 @@ export default function Home() {
     const observer = new ResizeObserver(updateInputFontSize);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [colorNoteText, fontFamily, fontWeight, template]);
+  }, [colorNoteText, fontFamily, fontLoadVersion, fontWeight, template]);
 
   useEffect(() => {
     if (!colorNoteEditing) return;
@@ -688,7 +704,7 @@ export default function Home() {
         batchOutputTimerRef.current = null;
       }
     };
-  }, [batchActive, batchPosters, colorNoteText, fontFamily, fontWeight, template]);
+  }, [batchActive, batchPosters, colorNoteText, fontFamily, fontLoadVersion, fontWeight, template]);
 
   useEffect(() => {
     return () => {
