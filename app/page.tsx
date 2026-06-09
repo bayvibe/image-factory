@@ -595,7 +595,7 @@ export default function Home() {
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [fontIndex, setFontIndex] = useState(0);
   const [colorCardFontIndex, setColorCardFontIndex] = useState(1);
-  const [template, setTemplate] = useState<TemplateKind>('yesbut');
+  const [template, setTemplate] = useState<TemplateKind>('color-note');
   const [colorNoteText, setColorNoteText] = useState(defaultColorNoteText);
   const [colorNoteEditing, setColorNoteEditing] = useState(false);
   const [colorNoteBaseColor, setColorNoteBaseColor] = useState<RgbColor>(defaultColorNoteColor);
@@ -1221,17 +1221,9 @@ export default function Home() {
           onClick={() => batchInputRef.current?.click()}
           className="absolute right-4 top-[calc(16px+env(safe-area-inset-top))] z-20 h-10 rounded-full bg-white/10 px-4 text-[14px] font-black text-white backdrop-blur active:scale-95"
         >
-          批量
+          批量上传
         </button>
         <div className="absolute left-4 top-[calc(16px+env(safe-area-inset-top))] z-20 grid grid-cols-2 overflow-hidden rounded-full bg-white/10 p-1 text-[12px] font-black text-white backdrop-blur">
-          <button
-            type="button"
-            aria-pressed={template === 'yesbut'}
-            onClick={() => setTemplate('yesbut')}
-            className={`h-8 px-3 transition active:scale-95 ${template === 'yesbut' ? 'rounded-full bg-white text-[#202020]' : 'text-white/65'}`}
-          >
-            Y/B
-          </button>
           <button
             type="button"
             aria-pressed={template === 'color-note'}
@@ -1241,6 +1233,14 @@ export default function Home() {
             }`}
           >
             调色卡
+          </button>
+          <button
+            type="button"
+            aria-pressed={template === 'yesbut'}
+            onClick={() => setTemplate('yesbut')}
+            className={`h-8 px-3 transition active:scale-95 ${template === 'yesbut' ? 'rounded-full bg-white text-[#202020]' : 'text-white/65'}`}
+          >
+            Y/B
           </button>
         </div>
         <div className="flex flex-1 flex-col items-center justify-start gap-8 pb-[calc(28px+env(safe-area-inset-bottom))] pt-[calc(82px+env(safe-area-inset-top))]">
@@ -1269,16 +1269,20 @@ export default function Home() {
                   type="button"
                   aria-label="上传上半部分图片"
                   onClick={() => openUpload('top')}
-                  className="absolute inset-x-2 top-2 z-10 h-[calc(50%-8px)] border border-dashed border-[#c4c4c4] border-b-0 bg-transparent"
-                />
+                  className="absolute inset-x-2 top-2 z-10 grid h-[calc(50%-8px)] place-items-center border border-dashed border-[#c4c4c4] border-b-0 bg-transparent text-[14px] font-bold text-[#202020]/45"
+                >
+                  点击上传图片
+                </button>
               ) : null}
               {!visiblePanels?.bottom.image ? (
                 <button
                   type="button"
                   aria-label={template === 'color-note' ? '上传调色卡图片' : '上传下半部分图片'}
                   onClick={() => openUpload('bottom')}
-                  className="absolute inset-x-2 bottom-2 z-10 h-[calc(50%-8px)] border border-dashed border-[#c4c4c4] border-t-0 bg-transparent"
-                />
+                  className="absolute inset-x-2 bottom-2 z-10 grid h-[calc(50%-8px)] place-items-center border border-dashed border-[#c4c4c4] border-t-0 bg-transparent text-[14px] font-bold text-[#202020]/45"
+                >
+                  点击上传图片
+                </button>
               ) : null}
               {template === 'yesbut' && !visiblePanels?.top.image && !visiblePanels?.bottom.image ? (
                 <div className="pointer-events-none absolute left-2 right-2 top-1/2 border-t border-dashed border-[#c4c4c4]" />
