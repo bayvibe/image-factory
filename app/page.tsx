@@ -1537,15 +1537,6 @@ export default function Home() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {mobileShareFiles ? (
-                <button
-                  type="button"
-                  onClick={shareMobileSaveImages}
-                  className="h-10 rounded-full bg-white px-4 text-[13px] font-black text-[#202020] active:scale-95"
-                >
-                  系统分享
-                </button>
-              ) : null}
               <button
                 type="button"
                 onClick={() => setMobileSaveImages(null)}
@@ -1569,6 +1560,15 @@ export default function Home() {
                     alt={`生成的第 ${index + 1} 张图片，长按保存到系统相册`}
                     className="block h-auto w-full shadow-[0_18px_48px_rgba(0,0,0,0.36)]"
                   />
+                  {mobileShareFiles ? (
+                    <button
+                      type="button"
+                      onClick={() => shareMobileSaveImages()}
+                      className="mt-3 h-11 w-full rounded-full bg-white text-[14px] font-black text-[#202020] active:scale-95"
+                    >
+                      存到照片
+                    </button>
+                  ) : null}
                 </div>
               ))}
             </div>
