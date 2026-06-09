@@ -34,10 +34,11 @@ type RgbColor = {
 
 const outputWidth = 1080;
 const outputHeight = 1440;
-const panelHeight = outputHeight / 2;
+const colorNotePanelRatio = 0.4;
 const maxSourceDimension = 2400;
 const labelFontSize = 74;
-const colorNoteFontSize = 56;
+const colorNoteFontSize = 56 * (2 / 3);
+const minimumColorNoteFontSize = 28;
 const defaultColorNoteText = '这一刻有自己的颜色';
 const defaultColorNoteColor: RgbColor = { r: 226, g: 176, b: 82 };
 
@@ -68,8 +69,12 @@ function emptyPanel(): PanelState {
   };
 }
 
-function panelY(panel: PanelName) {
-  return panel === 'top' ? 0 : panelHeight;
+function getPanelRect(panel: PanelName, template: TemplateKind) {
+  const topHeight = template === 'color-note' ? outputHeight * colorNotePanelRatio : outputHeight / 2;
+
+  return panel === 'top'
+    ? { y: 0, height: topHeight }
+    : { y: topHeight, height: outputHeight - topHeight };
 }
 
 function imageSize(image: HTMLImageElement) {
@@ -79,20 +84,22 @@ function imageSize(image: HTMLImageElement) {
   };
 }
 
-function getCoverScale(image: HTMLImageElement) {
+function getCoverScale(image: HTMLImageElement, panelName: PanelName, template: TemplateKind) {
   const size = imageSize(image);
-  return Math.max(outputWidth / size.width, panelHeight / size.height);
+  const panel = getPanelRect(panelName, template);
+  return Math.max(outputWidth / size.width, panel.height / size.height);
 }
 
-function getClampedPanel(panel: PanelState): PanelState {
+function getClampedPanel(panel: PanelState, panelName: PanelName, template: TemplateKind): PanelState {
   if (!panel.image) return panel;
 
-  const baseScale = getCoverScale(panel.image);
+  const panelRect = getPanelRect(panelName, template);
+  const baseScale = getCoverScale(panel.image, panelName, template);
   const size = imageSize(panel.image);
   const drawWidth = size.width * baseScale * panel.scale;
   const drawHeight = size.height * baseScale * panel.scale;
   const maxX = Math.max(0, (drawWidth - outputWidth) / 2);
-  const maxY = Math.max(0, (drawHeight - panelHeight) / 2);
+  const maxY = Math.max(0, (drawHeight - panelRect.height) / 2);
 
   return {
     ...panel,
@@ -101,10 +108,10 @@ function getClampedPanel(panel: PanelState): PanelState {
   };
 }
 
-function drawPlaceholder(ctx: CanvasRenderingContext2D, panelName: PanelName) {
-  const y = panelY(panelName);
+function drawPlaceholder(ctx: CanvasRenderingContext2D, panelName: PanelName, template: TemplateKind) {
+  const panel = getPanelRect(panelName, template);
   ctx.fillStyle = '#f1f1f1';
-  ctx.fillRect(0, y, outputWidth, panelHeight);
+  ctx.fillRect(0, panel.y, outputWidth, panel.height);
 }
 
 function colorToCss(color: RgbColor) {
@@ -213,7 +220,7 @@ function getReadableSameFamilyColor(background: RgbColor) {
 }
 
 function extractDominantColorFromPixels(pixels: Uint8ClampedArray) {
-  const buckets = new Map<string, { r: number; g: number; b: number; count: number; score: number }>();
+  const buckets = new Map<string, { r: number; g: number; b: number; count: number; luminance: number }>();
 
   for (let index = 0; index < pixels.length; index += 4) {
     const alpha = pixels[index + 3];
@@ -222,34 +229,23 @@ function extractDominantColorFromPixels(pixels: Uint8ClampedArray) {
     const r = pixels[index];
     const g = pixels[index + 1];
     const b = pixels[index + 2];
-    const hsl = rgbToHsl({ r, g, b });
-
-    if ((hsl.l < 8 || hsl.l > 94) && hsl.s < 18) continue;
-
-    const saturation = hsl.s / 100;
-    const neutralPenalty = hsl.s < 14 ? 0.18 : 1;
-    const blackWhitePenalty = hsl.l < 10 || hsl.l > 92 ? 0.25 : 1;
-    const saturationWeight = 0.9 + saturation * 0.2;
-    const pixelScore = saturationWeight * neutralPenalty * blackWhitePenalty;
     const key = `${r >> 4}-${g >> 4}-${b >> 4}`;
-    const bucket = buckets.get(key) ?? { r: 0, g: 0, b: 0, count: 0, score: 0 };
+    const bucket = buckets.get(key) ?? { r: 0, g: 0, b: 0, count: 0, luminance: 0 };
 
     bucket.r += r;
     bucket.g += g;
     bucket.b += b;
     bucket.count += 1;
-    bucket.score += pixelScore;
+    bucket.luminance += relativeLuminance({ r, g, b });
     buckets.set(key, bucket);
   }
 
-  let winner: { r: number; g: number; b: number; count: number; score: number } | null = null;
-  let winnerScore = 0;
+  let winner: { r: number; g: number; b: number; count: number; luminance: number } | null = null;
   for (const bucket of buckets.values()) {
-    const averageSalience = bucket.score / bucket.count;
-    const candidateScore = Math.sqrt(bucket.count) * averageSalience;
-    if (!winner || candidateScore > winnerScore) {
+    const bucketBrightness = bucket.luminance / bucket.count;
+    const winnerBrightness = winner ? winner.luminance / winner.count : 0;
+    if (!winner || bucket.count > winner.count || (bucket.count === winner.count && bucketBrightness > winnerBrightness)) {
       winner = bucket;
-      winnerScore = candidateScore;
     }
   }
 
@@ -274,19 +270,20 @@ function extractDominantColorFromPanel(panel: PanelState | null | undefined): Rg
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return defaultColorNoteColor;
 
-  const clamped = getClampedPanel(panel);
+  const panelRect = getPanelRect('bottom', 'color-note');
+  const clamped = getClampedPanel(panel, 'bottom', 'color-note');
   const image = clamped.image;
   if (!image) return defaultColorNoteColor;
 
   const size = imageSize(image);
-  const baseScale = getCoverScale(image);
+  const baseScale = getCoverScale(image, 'bottom', 'color-note');
   const scale = baseScale * clamped.scale;
   const drawWidth = size.width * scale;
   const drawHeight = size.height * scale;
   const x = (outputWidth - drawWidth) / 2 + clamped.offsetX;
-  const y = (panelHeight - drawHeight) / 2 + clamped.offsetY;
+  const y = (panelRect.height - drawHeight) / 2 + clamped.offsetY;
   const sampleScaleX = sampleWidth / outputWidth;
-  const sampleScaleY = sampleHeight / panelHeight;
+  const sampleScaleY = sampleHeight / panelRect.height;
 
   ctx.drawImage(image, x * sampleScaleX, y * sampleScaleY, drawWidth * sampleScaleX, drawHeight * sampleScaleY);
 
@@ -297,38 +294,48 @@ function extractDominantColorFromPanel(panel: PanelState | null | undefined): Rg
   }
 }
 
-function drawImagePanel(ctx: CanvasRenderingContext2D, panelName: PanelName, panel: PanelState) {
-  const y = panelY(panelName);
+function drawImagePanel(
+  ctx: CanvasRenderingContext2D,
+  panelName: PanelName,
+  panel: PanelState,
+  template: TemplateKind,
+) {
+  const panelRect = getPanelRect(panelName, template);
 
   if (!panel.image) {
-    drawPlaceholder(ctx, panelName);
+    drawPlaceholder(ctx, panelName, template);
     return;
   }
 
-  const clamped = getClampedPanel(panel);
+  const clamped = getClampedPanel(panel, panelName, template);
   const image = clamped.image;
   if (!image) return;
 
   const size = imageSize(image);
-  const baseScale = getCoverScale(image);
+  const baseScale = getCoverScale(image, panelName, template);
   const scale = baseScale * clamped.scale;
   const drawWidth = size.width * scale;
   const drawHeight = size.height * scale;
   const x = (outputWidth - drawWidth) / 2 + clamped.offsetX;
-  const drawY = y + (panelHeight - drawHeight) / 2 + clamped.offsetY;
+  const drawY = panelRect.y + (panelRect.height - drawHeight) / 2 + clamped.offsetY;
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, y, outputWidth, panelHeight);
+  ctx.rect(0, panelRect.y, outputWidth, panelRect.height);
   ctx.clip();
   ctx.drawImage(image, x, drawY, drawWidth, drawHeight);
   ctx.restore();
 }
 
-function drawColorPanel(ctx: CanvasRenderingContext2D, panelName: PanelName, color: RgbColor) {
-  const y = panelY(panelName);
+function drawColorPanel(
+  ctx: CanvasRenderingContext2D,
+  panelName: PanelName,
+  color: RgbColor,
+  template: TemplateKind,
+) {
+  const panel = getPanelRect(panelName, template);
   ctx.fillStyle = colorToCss(color);
-  ctx.fillRect(0, y, outputWidth, panelHeight);
+  ctx.fillRect(0, panel.y, outputWidth, panel.height);
 }
 
 function drawLabel(
@@ -339,12 +346,12 @@ function drawLabel(
   fontFamily: string,
   fontWeight: number,
 ) {
-  const y = panelY(panelName);
+  const panel = getPanelRect(panelName, 'yesbut');
   const text = label.trim();
   if (!text) return;
 
   const x = outputWidth / 2;
-  const textY = y + panelHeight / 2;
+  const textY = panel.y + panel.height / 2;
 
   ctx.save();
   ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
@@ -373,10 +380,10 @@ function getColorNoteFontSize(
 
   let fontSize = colorNoteFontSize;
   const maxWidth = outputWidth - 140;
-  while (fontSize > 42) {
+  while (fontSize > minimumColorNoteFontSize) {
     ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
     if (ctx.measureText(text).width <= maxWidth) break;
-    fontSize -= 2;
+    fontSize = Math.max(minimumColorNoteFontSize, fontSize - 2);
   }
 
   return fontSize;
@@ -390,12 +397,12 @@ function drawColorNoteLabel(
   fontFamily: string,
   fontWeight: number,
 ) {
-  const y = panelY(panelName);
+  const panel = getPanelRect(panelName, 'color-note');
   const text = label.trim();
   if (!text) return;
 
   const x = outputWidth / 2;
-  const textY = y + panelHeight / 2;
+  const textY = panel.y + panel.height / 2;
   const textColor = getReadableSameFamilyColor(backgroundColor);
   const contrastIsDark = relativeLuminance(textColor) < relativeLuminance(backgroundColor);
 
@@ -425,18 +432,20 @@ function drawPosterToCanvas(
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
+  canvas.width = outputWidth;
+  canvas.height = outputHeight;
   ctx.clearRect(0, 0, outputWidth, outputHeight);
 
   if (template === 'color-note') {
     const dominantColor = extractDominantColorFromPanel(panels.bottom);
-    drawColorPanel(ctx, 'top', dominantColor);
+    drawColorPanel(ctx, 'top', dominantColor, template);
     drawColorNoteLabel(ctx, 'top', colorNoteText, dominantColor, fontFamily, fontWeight);
-    drawImagePanel(ctx, 'bottom', panels.bottom);
+    drawImagePanel(ctx, 'bottom', panels.bottom, template);
     return;
   }
 
-  drawImagePanel(ctx, 'top', panels.top);
-  drawImagePanel(ctx, 'bottom', panels.bottom);
+  drawImagePanel(ctx, 'top', panels.top, template);
+  drawImagePanel(ctx, 'bottom', panels.bottom, template);
   drawLabel(ctx, 'top', 'Yes', labelFontSize, fontFamily, fontWeight);
   drawLabel(ctx, 'bottom', 'But', labelFontSize, fontFamily, fontWeight);
 }
@@ -516,6 +525,10 @@ function renderBatchOutputs(
 
 function isTouchMobileBrowser() {
   return window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 1;
+}
+
+function isWechatBrowser() {
+  return /MicroMessenger/i.test(navigator.userAgent);
 }
 
 async function dataUrlToPngFile(dataUrl: string, filename: string) {
@@ -601,6 +614,7 @@ export default function Home() {
   const [colorNoteBaseColor, setColorNoteBaseColor] = useState<RgbColor>(defaultColorNoteColor);
   const [colorNoteInputFontSize, setColorNoteInputFontSize] = useState(colorNoteFontSize * (430 / outputWidth));
   const [fontLoadVersion, setFontLoadVersion] = useState(0);
+  const [wechatSaveImages, setWechatSaveImages] = useState<string[] | null>(null);
   const topText = 'Yes';
   const bottomText = 'But';
   const activeFontOption = template === 'color-note' ? colorCardFontOptions[colorCardFontIndex] : fontOptions[fontIndex];
@@ -617,19 +631,23 @@ export default function Home() {
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
+    if (canvas.width !== outputWidth || canvas.height !== outputHeight) {
+      canvas.width = outputWidth;
+      canvas.height = outputHeight;
+    }
     ctx.clearRect(0, 0, outputWidth, outputHeight);
     const activePanels = batchActive ? batchPosters[currentBatchIndex]?.panels : panels;
     if (template === 'color-note') {
-      drawColorPanel(ctx, 'top', colorNoteBaseColor);
+      drawColorPanel(ctx, 'top', colorNoteBaseColor, template);
       if (!colorNoteEditing) {
         drawColorNoteLabel(ctx, 'top', colorNoteText, colorNoteBaseColor, fontFamily, fontWeight);
       }
-      drawImagePanel(ctx, 'bottom', activePanels?.bottom ?? emptyPanel());
+      drawImagePanel(ctx, 'bottom', activePanels?.bottom ?? emptyPanel(), template);
       return;
     }
 
-    drawImagePanel(ctx, 'top', activePanels?.top ?? emptyPanel());
-    drawImagePanel(ctx, 'bottom', activePanels?.bottom ?? emptyPanel());
+    drawImagePanel(ctx, 'top', activePanels?.top ?? emptyPanel(), template);
+    drawImagePanel(ctx, 'bottom', activePanels?.bottom ?? emptyPanel(), template);
     drawLabel(ctx, 'top', topText, fontSize, fontFamily, fontWeight);
     drawLabel(ctx, 'bottom', bottomText, fontSize, fontFamily, fontWeight);
   }, [batchActive, batchPosters, colorNoteBaseColor, colorNoteEditing, colorNoteText, currentBatchIndex, panels, fontFamily, fontLoadVersion, fontWeight, template]);
@@ -747,7 +765,7 @@ export default function Home() {
   }
 
   function panelFromY(y: number): PanelName {
-    return y < panelHeight ? 'top' : 'bottom';
+    return y < getPanelRect('top', template).height ? 'top' : 'bottom';
   }
 
   function openUpload(panel: PanelName) {
@@ -918,6 +936,12 @@ export default function Home() {
 
   function downloadAllBatchPosters() {
     const outputs = renderBatchOutputs(batchPosters, fontFamily, fontWeight, template, colorNoteText);
+    if (isWechatBrowser()) {
+      setDownloadMenuOpen(false);
+      setWechatSaveImages(outputs);
+      return;
+    }
+
     savePosterImages(
       outputs.map((dataUrl, index) => ({
         dataUrl,
@@ -931,7 +955,14 @@ export default function Home() {
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
-    savePosterImage(canvas.toDataURL('image/png'), `image-factory-${new Date().toISOString().slice(0, 10)}.png`);
+    const dataUrl = canvas.toDataURL('image/png');
+    if (isWechatBrowser()) {
+      setDownloadMenuOpen(false);
+      setWechatSaveImages([dataUrl]);
+      return;
+    }
+
+    savePosterImage(dataUrl, `image-factory-${new Date().toISOString().slice(0, 10)}.png`);
   }
 
   function updatePanel(panelName: PanelName, updater: (panel: PanelState) => PanelState) {
@@ -943,7 +974,7 @@ export default function Home() {
                 ...poster,
                 panels: {
                   ...poster.panels,
-                  [panelName]: getClampedPanel(updater(poster.panels[panelName])),
+                  [panelName]: getClampedPanel(updater(poster.panels[panelName]), panelName, template),
                 },
               }
             : poster,
@@ -954,7 +985,7 @@ export default function Home() {
 
     setPanels((current) => ({
       ...current,
-      [panelName]: getClampedPanel(updater(current[panelName])),
+      [panelName]: getClampedPanel(updater(current[panelName]), panelName, template),
     }));
   }
 
@@ -1279,7 +1310,9 @@ export default function Home() {
                   type="button"
                   aria-label={template === 'color-note' ? '上传调色卡图片' : '上传下半部分图片'}
                   onClick={() => openUpload('bottom')}
-                  className="absolute inset-x-2 bottom-2 z-10 grid h-[calc(50%-8px)] place-items-center border border-dashed border-[#c4c4c4] border-t-0 bg-transparent text-[14px] font-bold text-[#202020]/45"
+                  className={`absolute inset-x-2 bottom-2 z-10 grid place-items-center border border-dashed border-[#c4c4c4] border-t-0 bg-transparent text-[14px] font-bold text-[#202020]/45 ${
+                    template === 'color-note' ? 'top-[40%]' : 'h-[calc(50%-8px)]'
+                  }`}
                 >
                   点击上传图片
                 </button>
@@ -1293,7 +1326,7 @@ export default function Home() {
                     type="button"
                     aria-label="修改调色卡文案"
                     onClick={() => setColorNoteEditing(true)}
-                    className="absolute inset-x-0 top-0 z-10 h-1/2 cursor-text bg-transparent"
+                    className="absolute inset-x-0 top-0 z-10 h-[40%] cursor-text bg-transparent"
                   />
                   {colorNoteEditing ? (
                     <input
@@ -1308,7 +1341,7 @@ export default function Home() {
                           event.currentTarget.blur();
                         }
                       }}
-                      className="absolute left-8 right-8 top-[25%] z-30 -translate-y-1/2 bg-transparent text-center font-bold leading-none outline-none"
+                      className="absolute left-8 right-8 top-[20%] z-30 -translate-y-1/2 bg-transparent text-center font-bold leading-none outline-none"
                       style={{
                         color: colorToCss(colorNoteTextColor),
                         fontFamily,
@@ -1431,6 +1464,47 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {wechatSaveImages ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="保存图片到相册"
+          className="fixed inset-0 z-50 flex flex-col bg-[#202020] px-4 pb-[calc(20px+env(safe-area-inset-bottom))] pt-[calc(16px+env(safe-area-inset-top))] text-white"
+        >
+          <div className="mx-auto flex w-full max-w-[430px] items-center justify-between">
+            <div>
+              <div className="text-[16px] font-black">长按图片保存到相册</div>
+              <p className="mt-1 text-[12px] font-bold text-white/55">长按下方图片，选择“保存图片”。</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setWechatSaveImages(null)}
+              className="h-10 rounded-full bg-white/10 px-4 text-[13px] font-black text-white active:scale-95"
+            >
+              关闭
+            </button>
+          </div>
+          <div className="mx-auto mt-4 min-h-0 w-full max-w-[430px] flex-1 overflow-y-auto">
+            <div className="grid gap-4">
+              {wechatSaveImages.map((image, index) => (
+                <div key={index}>
+                  {wechatSaveImages.length > 1 ? (
+                    <div className="mb-2 text-center text-[12px] font-bold text-white/55">
+                      第 {index + 1} 张，共 {wechatSaveImages.length} 张
+                    </div>
+                  ) : null}
+                  <img
+                    src={image}
+                    alt={`生成的第 ${index + 1} 张图片，长按保存到系统相册`}
+                    className="block h-auto w-full shadow-[0_18px_48px_rgba(0,0,0,0.36)]"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <input
         ref={topInputRef}
