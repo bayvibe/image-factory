@@ -1047,7 +1047,6 @@ export default function Home() {
     const point = canvasPoint(event);
     const panel = panelFromY(point.y);
     if (template === 'color-note' && panel === 'top') {
-      setColorNoteEditing(true);
       return;
     }
 
