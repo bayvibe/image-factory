@@ -26,6 +26,11 @@ type BatchPoster = {
   panels: Record<PanelName, PanelState>;
 };
 
+type SaveImage = {
+  dataUrl: string;
+  filename: string;
+};
+
 type RgbColor = {
   r: number;
   g: number;
@@ -34,11 +39,14 @@ type RgbColor = {
 
 const outputWidth = 1080;
 const outputHeight = 1440;
-const colorNotePanelRatio = 0.4;
+const colorNotePanelRatio = 0.5;
 const maxSourceDimension = 2400;
 const labelFontSize = 74;
-const colorNoteFontSize = 56 * (2 / 3);
+const colorNoteFontSize = 48;
 const minimumColorNoteFontSize = 28;
+const colorNoteTextMaxWidth = outputWidth * 0.72;
+const colorNoteLineHeightRatio = 1.35;
+const colorNoteMaxLines = 3;
 const defaultColorNoteText = '这一刻有自己的颜色';
 const defaultColorNoteColor: RgbColor = { r: 226, g: 176, b: 82 };
 
@@ -369,24 +377,51 @@ function drawLabel(
   ctx.restore();
 }
 
-function getColorNoteFontSize(
+function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
+  const lines: string[] = [];
+
+  for (const paragraph of text.split('\n')) {
+    if (!paragraph) {
+      lines.push('');
+      continue;
+    }
+
+    let line = '';
+    for (const character of paragraph) {
+      const nextLine = line + character;
+      if (line && ctx.measureText(nextLine).width > maxWidth) {
+        lines.push(line);
+        line = character;
+      } else {
+        line = nextLine;
+      }
+    }
+    lines.push(line);
+  }
+
+  return lines;
+}
+
+function getColorNoteTextLayout(
   ctx: CanvasRenderingContext2D,
   label: string,
   fontFamily: string,
   fontWeight: number,
 ) {
   const text = label.trim();
-  if (!text) return colorNoteFontSize;
-
-  let fontSize = colorNoteFontSize;
-  const maxWidth = outputWidth - 140;
-  while (fontSize > minimumColorNoteFontSize) {
-    ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
-    if (ctx.measureText(text).width <= maxWidth) break;
-    fontSize = Math.max(minimumColorNoteFontSize, fontSize - 2);
+  if (!text) {
+    return { fontSize: colorNoteFontSize, lines: [''] };
   }
 
-  return fontSize;
+  let fontSize = colorNoteFontSize;
+  while (true) {
+    ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+    const lines = wrapCanvasText(ctx, text, colorNoteTextMaxWidth);
+    if (lines.length <= colorNoteMaxLines || fontSize <= minimumColorNoteFontSize) {
+      return { fontSize, lines };
+    }
+    fontSize = Math.max(minimumColorNoteFontSize, fontSize - 2);
+  }
 }
 
 function drawColorNoteLabel(
@@ -410,14 +445,17 @@ function drawColorNoteLabel(
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
-  const fontSize = getColorNoteFontSize(ctx, text, fontFamily, fontWeight);
-  const maxWidth = outputWidth - 140;
+  const { fontSize, lines } = getColorNoteTextLayout(ctx, text, fontFamily, fontWeight);
+  const lineHeight = fontSize * colorNoteLineHeightRatio;
+  const firstLineY = textY - ((lines.length - 1) * lineHeight) / 2;
   ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
   ctx.shadowColor = contrastIsDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(0, 0, 0, 0.18)';
   ctx.shadowBlur = 5;
   ctx.shadowOffsetY = 2;
   ctx.fillStyle = colorToCss(textColor);
-  ctx.fillText(text, x, textY, maxWidth);
+  lines.forEach((line, index) => {
+    ctx.fillText(line, x, firstLineY + index * lineHeight);
+  });
   ctx.restore();
 }
 
@@ -524,10 +562,12 @@ function renderBatchOutputs(
 }
 
 function isTouchMobileBrowser() {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
   return window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 1;
 }
 
 function isWechatBrowser() {
+  if (typeof navigator === 'undefined') return false;
   return /MicroMessenger/i.test(navigator.userAgent);
 }
 
@@ -537,41 +577,16 @@ async function dataUrlToPngFile(dataUrl: string, filename: string) {
   return new File([blob], filename, { type: 'image/png' });
 }
 
-async function shareImagesOnMobile(images: Array<{ dataUrl: string; filename: string }>) {
-  if (!isTouchMobileBrowser() || !navigator.share) return false;
-
-  try {
-    const files = await Promise.all(images.map((image) => dataUrlToPngFile(image.dataUrl, image.filename)));
-    if (navigator.canShare && !navigator.canShare({ files })) return false;
-    await navigator.share({
-      files,
-      title: '图片工厂',
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function savePosterImage(dataUrl: string, filename: string) {
-  const shared = await shareImagesOnMobile([{ dataUrl, filename }]);
-  if (shared) return;
-
+function downloadImageFile(dataUrl: string, filename: string) {
   const link = document.createElement('a');
   link.download = filename;
   link.href = dataUrl;
   link.click();
 }
 
-async function savePosterImages(images: Array<{ dataUrl: string; filename: string }>) {
-  const shared = await shareImagesOnMobile(images);
-  if (shared) return;
-
+function downloadImageFiles(images: SaveImage[]) {
   images.forEach((image) => {
-    const link = document.createElement('a');
-    link.download = image.filename;
-    link.href = image.dataUrl;
-    link.click();
+    downloadImageFile(image.dataUrl, image.filename);
   });
 }
 
@@ -579,7 +594,7 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const topInputRef = useRef<HTMLInputElement | null>(null);
   const bottomInputRef = useRef<HTMLInputElement | null>(null);
-  const colorNoteInputRef = useRef<HTMLInputElement | null>(null);
+  const colorNoteInputRef = useRef<HTMLTextAreaElement | null>(null);
   const batchInputRef = useRef<HTMLInputElement | null>(null);
   const batchAppendInputRef = useRef<HTMLInputElement | null>(null);
   const dragRef = useRef<{ panel: PanelName; x: number; y: number } | null>(null);
@@ -613,8 +628,10 @@ export default function Home() {
   const [colorNoteEditing, setColorNoteEditing] = useState(false);
   const [colorNoteBaseColor, setColorNoteBaseColor] = useState<RgbColor>(defaultColorNoteColor);
   const [colorNoteInputFontSize, setColorNoteInputFontSize] = useState(colorNoteFontSize * (430 / outputWidth));
+  const [colorNoteInputLineCount, setColorNoteInputLineCount] = useState(1);
   const [fontLoadVersion, setFontLoadVersion] = useState(0);
-  const [wechatSaveImages, setWechatSaveImages] = useState<string[] | null>(null);
+  const [mobileSaveImages, setMobileSaveImages] = useState<SaveImage[] | null>(null);
+  const [mobileShareFiles, setMobileShareFiles] = useState<File[] | null>(null);
   const topText = 'Yes';
   const bottomText = 'But';
   const activeFontOption = template === 'color-note' ? colorCardFontOptions[colorCardFontIndex] : fontOptions[fontIndex];
@@ -680,8 +697,9 @@ export default function Home() {
     if (!canvas || !ctx) return;
 
     const updateInputFontSize = () => {
-      const canvasFontSize = getColorNoteFontSize(ctx, colorNoteText, fontFamily, fontWeight);
-      setColorNoteInputFontSize(canvasFontSize * (canvas.getBoundingClientRect().width / outputWidth));
+      const layout = getColorNoteTextLayout(ctx, colorNoteText, fontFamily, fontWeight);
+      setColorNoteInputFontSize(layout.fontSize * (canvas.getBoundingClientRect().width / outputWidth));
+      setColorNoteInputLineCount(Math.max(1, layout.lines.length));
     };
 
     updateInputFontSize();
@@ -700,6 +718,25 @@ export default function Home() {
       input.setSelectionRange(input.value.length, input.value.length);
     });
   }, [colorNoteEditing]);
+
+  useEffect(() => {
+    setMobileShareFiles(null);
+    if (!mobileSaveImages || !navigator.share) return;
+
+    let cancelled = false;
+    Promise.all(mobileSaveImages.map((image) => dataUrlToPngFile(image.dataUrl, image.filename)))
+      .then((files) => {
+        if (cancelled || (navigator.canShare && !navigator.canShare({ files }))) return;
+        setMobileShareFiles(files);
+      })
+      .catch(() => {
+        // Long-press saving remains available when file sharing is unsupported.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mobileSaveImages]);
 
   useEffect(() => {
     if (!batchActive) return;
@@ -936,18 +973,18 @@ export default function Home() {
 
   function downloadAllBatchPosters() {
     const outputs = renderBatchOutputs(batchPosters, fontFamily, fontWeight, template, colorNoteText);
-    if (isWechatBrowser()) {
+    const images = outputs.map((dataUrl, index) => ({
+      dataUrl,
+      filename: `image-factory-batch-${String(index + 1).padStart(2, '0')}.png`,
+    }));
+
+    if (isTouchMobileBrowser()) {
       setDownloadMenuOpen(false);
-      setWechatSaveImages(outputs);
+      setMobileSaveImages(images);
       return;
     }
 
-    savePosterImages(
-      outputs.map((dataUrl, index) => ({
-        dataUrl,
-        filename: `image-factory-batch-${String(index + 1).padStart(2, '0')}.png`,
-      })),
-    );
+    downloadImageFiles(images);
   }
 
   function downloadCurrentPoster() {
@@ -955,14 +992,31 @@ export default function Home() {
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
-    const dataUrl = canvas.toDataURL('image/png');
-    if (isWechatBrowser()) {
+    const image = {
+      dataUrl: canvas.toDataURL('image/png'),
+      filename: `image-factory-${new Date().toISOString().slice(0, 10)}.png`,
+    };
+    if (isTouchMobileBrowser()) {
       setDownloadMenuOpen(false);
-      setWechatSaveImages([dataUrl]);
+      setMobileSaveImages([image]);
       return;
     }
 
-    savePosterImage(dataUrl, `image-factory-${new Date().toISOString().slice(0, 10)}.png`);
+    downloadImageFile(image.dataUrl, image.filename);
+  }
+
+  async function shareMobileSaveImages() {
+    if (!mobileShareFiles || !navigator.share) return;
+
+    try {
+      await navigator.share({
+        files: mobileShareFiles,
+        title: '图片工厂',
+      });
+      setMobileSaveImages(null);
+    } catch {
+      // Keep the save page open so the user can retry or long-press the image.
+    }
   }
 
   function updatePanel(panelName: PanelName, updater: (panel: PanelState) => PanelState) {
@@ -1311,7 +1365,7 @@ export default function Home() {
                   aria-label={template === 'color-note' ? '上传调色卡图片' : '上传下半部分图片'}
                   onClick={() => openUpload('bottom')}
                   className={`absolute inset-x-2 bottom-2 z-10 grid place-items-center border border-dashed border-[#c4c4c4] border-t-0 bg-transparent text-[14px] font-bold text-[#202020]/45 ${
-                    template === 'color-note' ? 'top-[40%]' : 'h-[calc(50%-8px)]'
+                    template === 'color-note' ? 'top-[50%]' : 'h-[calc(50%-8px)]'
                   }`}
                 >
                   点击上传图片
@@ -1326,28 +1380,31 @@ export default function Home() {
                     type="button"
                     aria-label="修改调色卡文案"
                     onClick={() => setColorNoteEditing(true)}
-                    className="absolute inset-x-0 top-0 z-10 h-[40%] cursor-text bg-transparent"
+                    className="absolute inset-x-0 top-0 z-10 h-[50%] cursor-text bg-transparent"
                   />
                   {colorNoteEditing ? (
-                    <input
+                    <textarea
                       ref={colorNoteInputRef}
                       value={colorNoteText}
                       aria-label="调色卡文案"
                       maxLength={24}
+                      rows={colorNoteInputLineCount}
                       onChange={(event) => setColorNoteText(event.target.value)}
                       onBlur={() => setColorNoteEditing(false)}
                       onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === 'Escape') {
+                        if (event.key === 'Escape' || (event.key === 'Enter' && !event.shiftKey)) {
+                          event.preventDefault();
                           event.currentTarget.blur();
                         }
                       }}
-                      className="absolute left-8 right-8 top-[20%] z-30 -translate-y-1/2 bg-transparent text-center font-bold leading-none outline-none"
+                      className="absolute left-1/2 top-[20%] z-30 w-[72%] -translate-x-1/2 -translate-y-1/2 resize-none overflow-hidden border-0 bg-transparent text-center font-bold outline-none"
                       style={{
                         color: colorToCss(colorNoteTextColor),
                         fontFamily,
                         fontSize: `${colorNoteInputFontSize}px`,
                         fontWeight,
-                        lineHeight: `${colorNoteInputFontSize}px`,
+                        height: `${colorNoteInputFontSize * colorNoteLineHeightRatio * colorNoteInputLineCount}px`,
+                        lineHeight: `${colorNoteInputFontSize * colorNoteLineHeightRatio}px`,
                         padding: 0,
                         textShadow:
                           relativeLuminance(colorNoteTextColor) < relativeLuminance(colorNoteBaseColor)
@@ -1465,7 +1522,7 @@ export default function Home() {
         </div>
       </section>
 
-      {wechatSaveImages ? (
+      {mobileSaveImages ? (
         <div
           role="dialog"
           aria-modal="true"
@@ -1474,28 +1531,41 @@ export default function Home() {
         >
           <div className="mx-auto flex w-full max-w-[430px] items-center justify-between">
             <div>
-              <div className="text-[16px] font-black">长按图片保存到相册</div>
-              <p className="mt-1 text-[12px] font-bold text-white/55">长按下方图片，选择“保存图片”。</p>
+              <div className="text-[16px] font-black">保存图片</div>
+              <p className="mt-1 text-[12px] font-bold text-white/55">
+                {isWechatBrowser() ? '点击系统分享，或长按图片选择“保存图片”。' : '点击系统分享保存，或长按下方图片。'}
+              </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setWechatSaveImages(null)}
-              className="h-10 rounded-full bg-white/10 px-4 text-[13px] font-black text-white active:scale-95"
-            >
-              关闭
-            </button>
+            <div className="flex items-center gap-2">
+              {mobileShareFiles ? (
+                <button
+                  type="button"
+                  onClick={shareMobileSaveImages}
+                  className="h-10 rounded-full bg-white px-4 text-[13px] font-black text-[#202020] active:scale-95"
+                >
+                  系统分享
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setMobileSaveImages(null)}
+                className="h-10 rounded-full bg-white/10 px-4 text-[13px] font-black text-white active:scale-95"
+              >
+                关闭
+              </button>
+            </div>
           </div>
           <div className="mx-auto mt-4 min-h-0 w-full max-w-[430px] flex-1 overflow-y-auto">
             <div className="grid gap-4">
-              {wechatSaveImages.map((image, index) => (
+              {mobileSaveImages.map((image, index) => (
                 <div key={index}>
-                  {wechatSaveImages.length > 1 ? (
+                  {mobileSaveImages.length > 1 ? (
                     <div className="mb-2 text-center text-[12px] font-bold text-white/55">
-                      第 {index + 1} 张，共 {wechatSaveImages.length} 张
+                      第 {index + 1} 张，共 {mobileSaveImages.length} 张
                     </div>
                   ) : null}
                   <img
-                    src={image}
+                    src={image.dataUrl}
                     alt={`生成的第 ${index + 1} 张图片，长按保存到系统相册`}
                     className="block h-auto w-full shadow-[0_18px_48px_rgba(0,0,0,0.36)]"
                   />
