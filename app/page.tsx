@@ -1396,7 +1396,7 @@ export default function Home() {
                           event.currentTarget.blur();
                         }
                       }}
-                      className="absolute left-1/2 top-[20%] z-30 w-[72%] -translate-x-1/2 -translate-y-1/2 resize-none overflow-hidden border-0 bg-transparent text-center font-bold outline-none"
+                      className="absolute left-1/2 top-[25%] z-30 w-[72%] -translate-x-1/2 -translate-y-1/2 resize-none overflow-hidden border-0 bg-transparent text-center font-bold outline-none"
                       style={{
                         color: colorToCss(colorNoteTextColor),
                         fontFamily,
