@@ -1560,15 +1560,18 @@ export default function Home() {
                     alt={`生成的第 ${index + 1} 张图片，长按保存到系统相册`}
                     className="block h-auto w-full shadow-[0_18px_48px_rgba(0,0,0,0.36)]"
                   />
-                  {mobileShareFiles ? (
-                    <button
-                      type="button"
-                      onClick={() => shareMobileSaveImages()}
-                      className="mt-3 h-11 w-full rounded-full bg-white text-[14px] font-black text-[#202020] active:scale-95"
-                    >
-                      存到照片
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (mobileShareFiles && navigator.share) {
+                        shareMobileSaveImages();
+                      }
+                    }}
+                    className="mt-3 h-11 w-full rounded-full bg-white text-[14px] font-black text-[#202020] active:scale-95 disabled:opacity-40"
+                    disabled={!mobileShareFiles || !navigator.share}
+                  >
+                    存到照片
+                  </button>
                 </div>
               ))}
             </div>
