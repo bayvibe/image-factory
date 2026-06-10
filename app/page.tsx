@@ -740,6 +740,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!batchActive) return;
+    if (colorNoteEditing) return;
 
     if (batchOutputTimerRef.current !== null) {
       window.clearTimeout(batchOutputTimerRef.current);
@@ -759,7 +760,7 @@ export default function Home() {
         batchOutputTimerRef.current = null;
       }
     };
-  }, [batchActive, batchPosters, colorNoteText, fontFamily, fontLoadVersion, fontWeight, template]);
+  }, [batchActive, batchPosters, colorNoteText, colorNoteEditing, fontFamily, fontLoadVersion, fontWeight, template]);
 
   useEffect(() => {
     return () => {
