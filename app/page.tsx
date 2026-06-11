@@ -690,15 +690,18 @@ export default function Home() {
   }, [colorNoteText, fontFamily, fontWeight, template]);
 
   useEffect(() => {
-    if (template !== 'color-note') return;
+    if (template !== 'color-note' || mode !== 'single') return;
 
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
     const updateInputFontSize = () => {
+      const canvasWidth = canvas.getBoundingClientRect().width;
+      if (canvasWidth <= 0) return;
+
       const layout = getColorNoteTextLayout(ctx, colorNoteText, fontFamily, fontWeight);
-      setColorNoteInputFontSize(layout.fontSize * (canvas.getBoundingClientRect().width / outputWidth));
+      setColorNoteInputFontSize(layout.fontSize * (canvasWidth / outputWidth));
       setColorNoteInputLineCount(Math.max(1, layout.lines.length));
     };
 
@@ -706,7 +709,7 @@ export default function Home() {
     const observer = new ResizeObserver(updateInputFontSize);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [colorNoteText, fontFamily, fontLoadVersion, fontWeight, template]);
+  }, [colorNoteText, fontFamily, fontLoadVersion, fontWeight, mode, template]);
 
   useEffect(() => {
     if (!colorNoteEditing) return;
