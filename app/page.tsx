@@ -24,6 +24,7 @@ type BatchAsset = {
 type BatchPoster = {
   id: string;
   panels: Record<PanelName, PanelState>;
+  colorNoteText: string;
 };
 
 type SaveImage = {
@@ -546,7 +547,6 @@ function renderBatchOutputs(
   fontFamily: string,
   fontWeight: number,
   template: TemplateKind,
-  colorNoteText: string,
 ) {
   const canvas = document.createElement('canvas');
   canvas.width = outputWidth;
@@ -554,7 +554,7 @@ function renderBatchOutputs(
 
   const outputs: string[] = [];
   for (const poster of posters) {
-    drawPosterToCanvas(canvas, poster.panels, fontFamily, fontWeight, template, colorNoteText);
+    drawPosterToCanvas(canvas, poster.panels, fontFamily, fontWeight, template, poster.colorNoteText);
     outputs.push(canvas.toDataURL('image/png'));
   }
 
@@ -639,6 +639,9 @@ export default function Home() {
   const fontWeight = activeFontOption.weight;
   const fontSize = labelFontSize;
   const editablePanels = batchActive ? batchPosters[currentBatchIndex]?.panels : panels;
+  const activeColorNoteText = batchActive
+    ? (batchPosters[currentBatchIndex]?.colorNoteText ?? colorNoteText)
+    : colorNoteText;
   const hasEditableImage =
     template === 'color-note' ? Boolean(editablePanels?.bottom.image) : Boolean(editablePanels?.top.image || editablePanels?.bottom.image);
   const colorNoteTextColor = getReadableSameFamilyColor(colorNoteBaseColor);
@@ -657,7 +660,7 @@ export default function Home() {
     if (template === 'color-note') {
       drawColorPanel(ctx, 'top', colorNoteBaseColor, template);
       if (!colorNoteEditing) {
-        drawColorNoteLabel(ctx, 'top', colorNoteText, colorNoteBaseColor, fontFamily, fontWeight);
+        drawColorNoteLabel(ctx, 'top', activeColorNoteText, colorNoteBaseColor, fontFamily, fontWeight);
       }
       drawImagePanel(ctx, 'bottom', activePanels?.bottom ?? emptyPanel(), template);
       return;
@@ -667,7 +670,7 @@ export default function Home() {
     drawImagePanel(ctx, 'bottom', activePanels?.bottom ?? emptyPanel(), template);
     drawLabel(ctx, 'top', topText, fontSize, fontFamily, fontWeight);
     drawLabel(ctx, 'bottom', bottomText, fontSize, fontFamily, fontWeight);
-  }, [batchActive, batchPosters, colorNoteBaseColor, colorNoteEditing, colorNoteText, currentBatchIndex, panels, fontFamily, fontLoadVersion, fontWeight, template]);
+  }, [activeColorNoteText, batchActive, batchPosters, colorNoteBaseColor, colorNoteEditing, currentBatchIndex, panels, fontFamily, fontLoadVersion, fontWeight, template]);
 
   useEffect(() => {
     if (template !== 'color-note') return;
@@ -678,7 +681,7 @@ export default function Home() {
     if (template !== 'color-note' || !document.fonts) return;
 
     let cancelled = false;
-    document.fonts.load(`${fontWeight} ${colorNoteFontSize}px ${fontFamily}`, colorNoteText).then(() => {
+    document.fonts.load(`${fontWeight} ${colorNoteFontSize}px ${fontFamily}`, activeColorNoteText).then(() => {
       if (!cancelled) {
         setFontLoadVersion((current) => current + 1);
       }
@@ -687,7 +690,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [colorNoteText, fontFamily, fontWeight, template]);
+  }, [activeColorNoteText, fontFamily, fontWeight, template]);
 
   useEffect(() => {
     if (template !== 'color-note' || mode !== 'single') return;
@@ -700,7 +703,7 @@ export default function Home() {
       const canvasWidth = canvas.getBoundingClientRect().width;
       if (canvasWidth <= 0) return;
 
-      const layout = getColorNoteTextLayout(ctx, colorNoteText, fontFamily, fontWeight);
+      const layout = getColorNoteTextLayout(ctx, activeColorNoteText, fontFamily, fontWeight);
       setColorNoteInputFontSize(layout.fontSize * (canvasWidth / outputWidth));
       setColorNoteInputLineCount(Math.max(1, layout.lines.length));
     };
@@ -709,7 +712,7 @@ export default function Home() {
     const observer = new ResizeObserver(updateInputFontSize);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [colorNoteText, fontFamily, fontLoadVersion, fontWeight, mode, template]);
+  }, [activeColorNoteText, fontFamily, fontLoadVersion, fontWeight, mode, template]);
 
   useEffect(() => {
     if (!colorNoteEditing) return;
@@ -751,7 +754,7 @@ export default function Home() {
 
     batchOutputTimerRef.current = window.setTimeout(
       () => {
-        setBatchOutputs(renderBatchOutputs(batchPosters, fontFamily, fontWeight, template, colorNoteText));
+        setBatchOutputs(renderBatchOutputs(batchPosters, fontFamily, fontWeight, template));
         batchOutputTimerRef.current = null;
       },
       interactionActiveRef.current ? 220 : 40,
@@ -763,7 +766,7 @@ export default function Home() {
         batchOutputTimerRef.current = null;
       }
     };
-  }, [batchActive, batchPosters, colorNoteText, colorNoteEditing, fontFamily, fontLoadVersion, fontWeight, template]);
+  }, [batchActive, batchPosters, colorNoteEditing, fontFamily, fontLoadVersion, fontWeight, template]);
 
   useEffect(() => {
     return () => {
@@ -936,11 +939,12 @@ export default function Home() {
               ? panelFromImage(batchAssets[assetIndex]?.image ?? null)
               : panelFromImage(batchAssets[assetIndex + 1]?.image ?? null),
         },
+        colorNoteText,
       };
     });
 
     setBatchPosters(posters);
-    setBatchOutputs(renderBatchOutputs(posters, fontFamily, fontWeight, template, colorNoteText));
+    setBatchOutputs(renderBatchOutputs(posters, fontFamily, fontWeight, template));
     setBatchActive(true);
     setCurrentBatchIndex(0);
     setMode('single');
@@ -953,6 +957,7 @@ export default function Home() {
         top: emptyPanel(),
         bottom: emptyPanel(),
       },
+      colorNoteText: activeColorNoteText,
     };
 
     if (!batchActive) {
@@ -960,6 +965,7 @@ export default function Home() {
         {
           id: `poster-current-${Date.now()}`,
           panels,
+          colorNoteText: activeColorNoteText,
         },
         emptyPoster,
       ]);
@@ -976,7 +982,7 @@ export default function Home() {
   }
 
   function downloadAllBatchPosters() {
-    const outputs = renderBatchOutputs(batchPosters, fontFamily, fontWeight, template, colorNoteText);
+    const outputs = renderBatchOutputs(batchPosters, fontFamily, fontWeight, template);
     const images = outputs.map((dataUrl, index) => ({
       dataUrl,
       filename: `image-factory-batch-${String(index + 1).padStart(2, '0')}.png`,
@@ -1045,6 +1051,19 @@ export default function Home() {
       ...current,
       [panelName]: getClampedPanel(updater(current[panelName]), panelName, template),
     }));
+  }
+
+  function updateColorNoteText(nextText: string) {
+    if (batchActive) {
+      setBatchPosters((current) =>
+        current.map((poster, index) =>
+          index === currentBatchIndex ? { ...poster, colorNoteText: nextText } : poster,
+        ),
+      );
+      return;
+    }
+
+    setColorNoteText(nextText);
   }
 
   function handlePointerDown(event: PointerEvent<HTMLCanvasElement>) {
@@ -1388,11 +1407,11 @@ export default function Home() {
                   {colorNoteEditing ? (
                     <textarea
                       ref={colorNoteInputRef}
-                      value={colorNoteText}
+                      value={activeColorNoteText}
                       aria-label="调色卡文案"
                       maxLength={24}
                       rows={colorNoteInputLineCount}
-                      onChange={(event) => setColorNoteText(event.target.value)}
+                      onChange={(event) => updateColorNoteText(event.target.value)}
                       onBlur={() => setColorNoteEditing(false)}
                       onKeyDown={(event) => {
                         if (event.key === 'Escape' || (event.key === 'Enter' && !event.shiftKey)) {
